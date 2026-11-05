@@ -10,6 +10,7 @@ Roguelike de donjons pour iPhone (site web jouable hors ligne).
 - Faille vers l'étage suivant, difficulté croissante
 - Butin aux couleurs de rareté façon WoW
 - Sauvegarde automatique à chaque étage, jouable hors ligne
+- Musique et bruitages synthétisés (thèmes menu, exploration, combat, gardien)
 
 ## Crédits
 - Graphismes : [0x72 — Dungeon Tileset II](https://0x72.itch.io/dungeontileset-ii) (CC0)

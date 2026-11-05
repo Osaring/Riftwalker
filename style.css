@@ -85,3 +85,7 @@ h2.red { color: #ff6a5a; }
 #fade { position: fixed; inset: 0; background: #000; opacity: 0; pointer-events: none; transition: opacity .35s; z-index: 20; }
 #fade.on { opacity: 1; }
 #loading { position: fixed; inset: 0; display: flex; align-items: center; justify-content: center; background: var(--bg); z-index: 30; font-size: 18px; color: var(--muted); }
+
+.menu .row { display: flex; gap: 10px; }
+.menu .row button { flex: 1; font-size: 15px; padding: 10px 6px; }
+.tap { position: relative; margin: -18px 0 18px; font-size: 13px; color: #6d5f80; animation: pulse 2s ease-in-out infinite; }

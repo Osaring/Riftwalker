@@ -32,7 +32,9 @@ const store = {
   set(k, v) { try { localStorage.setItem(k, JSON.stringify(v)); } catch (e) { /* stockage indisponible */ } },
   del(k) { try { localStorage.removeItem(k); } catch (e) { } },
 };
-let meta = store.get('rw_meta', { gold: 0, bestFloor: 0, sound: true, runs: 0 });
+let meta = store.get('rw_meta', { gold: 0, bestFloor: 0, sound: true, music: true, runs: 0 });
+if (meta.music === undefined) meta.music = true;
+if (meta.sound === undefined) meta.sound = true;
 const saveMeta = () => store.set('rw_meta', meta);
 
 // ============================================================
@@ -76,54 +78,220 @@ function spr(ctx, name, x, y, opt) {
 const sprSize = (name) => SPR[name] || [0, 0, 16, 16];
 
 // ============================================================
-// 3. SON (synthétisé, fonctionne hors ligne)
+// 3. SON & MUSIQUE (tout est synthétisé : rien à télécharger, marche hors ligne)
 // ============================================================
-let actx = null;
+let actx = null, sfxBus, musicBus, musicFilter, noiseBuf, reverbIn;
 function audioUnlock() {
-  if (!actx) { try { actx = new (window.AudioContext || window.webkitAudioContext)(); } catch (e) { return; } }
+  if (!actx) {
+    try {
+      // iOS : jouer le son même si le téléphone est en mode silencieux (iOS 17+)
+      if (navigator.audioSession) { try { navigator.audioSession.type = 'playback'; } catch (e) { } }
+      actx = new (window.AudioContext || window.webkitAudioContext)();
+    } catch (e) { return; }
+    buildAudioGraph();
+    setInterval(musicTick, 25);
+  }
   if (actx.state === 'suspended') actx.resume();
 }
-function tone(freq, dur, type = 'square', vol = 0.12, slide = 0, delay = 0) {
-  if (!actx || !meta.sound) return;
-  const t = actx.currentTime + delay;
-  const o = actx.createOscillator(), g = actx.createGain();
-  o.type = type; o.frequency.setValueAtTime(freq, t);
-  if (slide) o.frequency.exponentialRampToValueAtTime(Math.max(30, freq + slide), t + dur);
-  g.gain.setValueAtTime(vol, t); g.gain.exponentialRampToValueAtTime(0.001, t + dur);
-  o.connect(g); g.connect(actx.destination); o.start(t); o.stop(t + dur + 0.02);
+function buildAudioGraph() {
+  const comp = actx.createDynamicsCompressor();
+  comp.threshold.value = -14; comp.ratio.value = 4;
+  const master = actx.createGain(); master.gain.value = 2.0;
+  comp.connect(master); master.connect(actx.destination);
+  // écho de donjon (réverbération synthétique)
+  const len = Math.floor(actx.sampleRate * 1.6);
+  const ir = actx.createBuffer(2, len, actx.sampleRate);
+  for (let ch = 0; ch < 2; ch++) { const d = ir.getChannelData(ch); for (let i = 0; i < len; i++) d[i] = (Math.random() * 2 - 1) * Math.pow(1 - i / len, 3); }
+  const conv = actx.createConvolver(); conv.buffer = ir;
+  reverbIn = actx.createGain(); reverbIn.gain.value = 1;
+  const wet = actx.createGain(); wet.gain.value = 0.32;
+  reverbIn.connect(conv); conv.connect(wet); wet.connect(comp);
+  // effets sonores
+  sfxBus = actx.createGain(); sfxBus.gain.value = meta.sound ? 1 : 0;
+  sfxBus.connect(comp);
+  const sfxSend = actx.createGain(); sfxSend.gain.value = 0.35; sfxBus.connect(sfxSend); sfxSend.connect(reverbIn);
+  // musique (avec un filtre : la musique s'étouffe quand on met pause)
+  musicBus = actx.createGain(); musicBus.gain.value = meta.music ? 0.9 : 0;
+  musicFilter = actx.createBiquadFilter(); musicFilter.type = 'lowpass'; musicFilter.frequency.value = 18000;
+  musicBus.connect(musicFilter); musicFilter.connect(comp);
+  const mSend = actx.createGain(); mSend.gain.value = 0.45; musicFilter.connect(mSend); mSend.connect(reverbIn);
+  const delay = actx.createDelay(1); delay.delayTime.value = 0.33;
+  const fb = actx.createGain(); fb.gain.value = 0.28;
+  const dWet = actx.createGain(); dWet.gain.value = 0.18;
+  musicFilter.connect(delay); delay.connect(fb); fb.connect(delay); delay.connect(dWet); dWet.connect(comp);
+  // bruit blanc réutilisable
+  noiseBuf = actx.createBuffer(1, actx.sampleRate, actx.sampleRate);
+  const nd = noiseBuf.getChannelData(0); for (let i = 0; i < nd.length; i++) nd[i] = Math.random() * 2 - 1;
 }
-function noise(dur, vol = 0.15, hp = 800, delay = 0) {
-  if (!actx || !meta.sound) return;
-  const t = actx.currentTime + delay;
-  const len = Math.floor(actx.sampleRate * dur);
-  const buf = actx.createBuffer(1, len, actx.sampleRate);
-  const d = buf.getChannelData(0);
-  for (let i = 0; i < len; i++) d[i] = (Math.random() * 2 - 1) * (1 - i / len);
-  const s = actx.createBufferSource(); s.buffer = buf;
-  const f = actx.createBiquadFilter(); f.type = 'highpass'; f.frequency.value = hp;
-  const g = actx.createGain(); g.gain.value = vol;
-  s.connect(f); f.connect(g); g.connect(actx.destination); s.start(t);
+function setVolumes() {
+  if (!actx) return;
+  const t = actx.currentTime;
+  sfxBus.gain.setTargetAtTime(meta.sound ? 1 : 0, t, 0.05);
+  musicBus.gain.setTargetAtTime(meta.music ? 0.9 : 0, t, 0.2);
 }
+function muffleMusic(on) { if (actx) musicFilter.frequency.setTargetAtTime(on ? 550 : 18000, actx.currentTime, 0.15); }
+
+// --- briques sonores ---
+function osc(bus, freq, t, dur, type, vol, o = {}) {
+  const os = actx.createOscillator(), g = actx.createGain();
+  os.type = type; os.frequency.setValueAtTime(freq, t);
+  if (o.slide) os.frequency.exponentialRampToValueAtTime(Math.max(25, freq + o.slide), t + dur);
+  if (o.detune) os.detune.value = o.detune;
+  const a = o.attack || 0.005;
+  g.gain.setValueAtTime(0.0001, t);
+  g.gain.linearRampToValueAtTime(vol, t + a);
+  if (o.sustain) { g.gain.setValueAtTime(vol, t + Math.max(a, dur - (o.release || 0.1))); g.gain.linearRampToValueAtTime(0.0001, t + dur); }
+  else g.gain.exponentialRampToValueAtTime(0.0001, t + dur);
+  let node = os;
+  if (o.lp) { const f = actx.createBiquadFilter(); f.type = 'lowpass'; f.frequency.value = o.lp; os.connect(f); node = f; }
+  node.connect(g); g.connect(bus);
+  os.start(t); os.stop(t + dur + 0.05);
+}
+function nz(bus, t, dur, vol, type = 'highpass', freq = 800, q = 1) {
+  const s = actx.createBufferSource(); s.buffer = noiseBuf;
+  const f = actx.createBiquadFilter(); f.type = type; f.frequency.value = freq; f.Q.value = q;
+  const g = actx.createGain();
+  g.gain.setValueAtTime(vol, t); g.gain.exponentialRampToValueAtTime(0.0001, t + dur);
+  s.connect(f); f.connect(g); g.connect(bus);
+  s.start(t, Math.random() * 0.5); s.stop(t + dur + 0.02);
+}
+const ok = () => actx && meta.sound;
+const now = (d = 0) => actx.currentTime + d;
+function tone(freq, dur, type = 'square', vol = 0.12, slide = 0, delay = 0) { if (ok()) osc(sfxBus, freq, now(delay), dur, type, vol, { slide }); }
+function noise(dur, vol = 0.15, hp = 800, delay = 0, type = 'highpass') { if (ok()) nz(sfxBus, now(delay), dur, vol, type, hp); }
+const midi = (m) => 440 * Math.pow(2, (m - 69) / 12);
+
+let coinCombo = 0, coinComboT = 0;
 const SFX = {
-  swing: () => noise(0.09, 0.12, 2500),
-  hit: () => { tone(180, 0.09, 'square', 0.1, -120); noise(0.05, 0.1, 1200); },
-  crit: () => { tone(320, 0.12, 'square', 0.12, -250); noise(0.08, 0.16, 900); },
-  hurt: () => { tone(140, 0.2, 'sawtooth', 0.12, -90); },
-  coin: () => { tone(880, 0.06, 'square', 0.06); tone(1320, 0.1, 'square', 0.06, 0, 0.06); },
-  chest: () => { tone(330, 0.08, 'triangle', 0.12); tone(494, 0.08, 'triangle', 0.12, 0, 0.08); tone(659, 0.16, 'triangle', 0.12, 0, 0.16); },
-  lock: () => { noise(0.2, 0.14, 300); tone(90, 0.25, 'square', 0.08, -30); },
-  unlock: () => { tone(523, 0.08, 'square', 0.07); tone(784, 0.14, 'square', 0.07, 0, 0.08); },
-  whirl: () => { noise(0.35, 0.14, 1500); tone(200, 0.35, 'sawtooth', 0.05, 300); },
-  charge: () => { noise(0.25, 0.12, 600); tone(110, 0.25, 'sawtooth', 0.08, 180); },
-  potion: () => { [392, 523, 659, 784].forEach((f, i) => tone(f, 0.08, 'triangle', 0.08, 0, i * 0.06)); },
-  die: () => { noise(0.18, 0.1, 500); tone(160, 0.2, 'triangle', 0.08, -100); },
-  slam: () => { noise(0.4, 0.22, 100); tone(70, 0.4, 'square', 0.12, -40); },
-  shoot: () => tone(600, 0.12, 'sawtooth', 0.05, -400),
-  key: () => { [659, 880, 1175].forEach((f, i) => tone(f, 0.1, 'square', 0.07, 0, i * 0.07)); },
-  portal: () => { tone(220, 0.8, 'sine', 0.12, 660); tone(330, 0.8, 'sine', 0.08, 880); },
-  death: () => { tone(220, 0.3, 'square', 0.1, -100); tone(165, 0.3, 'square', 0.1, -80, 0.25); tone(110, 0.6, 'square', 0.1, -60, 0.5); },
-  loot: (r) => { const base = [300, 400, 500, 600, 750, 900][r]; tone(base, 0.1, 'triangle', 0.1); tone(base * 1.5, 0.2, 'triangle', 0.1, 0, 0.1); },
+  swing: () => { noise(0.1, 0.13, 2200, 0, 'bandpass'); noise(0.06, 0.06, 5000); },
+  hit: () => { tone(170, 0.09, 'square', 0.09, -110); noise(0.06, 0.13, 1100, 0, 'bandpass'); tone(90, 0.08, 'sine', 0.15, -40); },
+  crit: () => { tone(330, 0.14, 'square', 0.1, -260); noise(0.1, 0.18, 900, 0, 'bandpass'); tone(70, 0.16, 'sine', 0.22, -30); tone(1600, 0.08, 'triangle', 0.05, -800); },
+  hurt: () => { tone(150, 0.22, 'sawtooth', 0.11, -95); noise(0.12, 0.1, 400, 0, 'lowpass'); },
+  coin: () => {
+    if (!ok()) return;
+    coinCombo = (actx.currentTime - coinComboT < 0.5) ? Math.min(coinCombo + 1, 10) : 0;
+    coinComboT = actx.currentTime;
+    const f = 880 * Math.pow(2, coinCombo / 12);
+    tone(f, 0.05, 'square', 0.045); tone(f * 1.5, 0.09, 'square', 0.045, 0, 0.05);
+  },
+  chest: () => { tone(110, 0.15, 'sawtooth', 0.06, 40); noise(0.12, 0.08, 600, 0, 'lowpass'); [523, 659, 784, 1047].forEach((f, i) => tone(f, 0.18, 'triangle', 0.09, 0, 0.1 + i * 0.07)); },
+  lock: () => { noise(0.25, 0.16, 300, 0, 'lowpass'); tone(85, 0.3, 'square', 0.07, -25); noise(0.08, 0.1, 3000, 0.05); },
+  unlock: () => { tone(523, 0.08, 'square', 0.06); tone(659, 0.08, 'square', 0.06, 0, 0.08); tone(784, 0.2, 'square', 0.06, 0, 0.16); },
+  whirl: () => { noise(0.4, 0.15, 1200, 0, 'bandpass'); tone(180, 0.4, 'sawtooth', 0.05, 340); tone(120, 0.35, 'triangle', 0.06, 200, 0.05); },
+  charge: () => { noise(0.3, 0.13, 500, 0, 'bandpass'); tone(100, 0.28, 'sawtooth', 0.08, 200); },
+  potion: () => { noise(0.15, 0.05, 700, 0, 'lowpass'); [392, 523, 659, 784, 1047].forEach((f, i) => tone(f, 0.12, 'triangle', 0.07, 0, i * 0.055)); },
+  die: () => { noise(0.2, 0.11, 500, 0, 'lowpass'); tone(170, 0.22, 'triangle', 0.08, -110); },
+  slam: () => { noise(0.5, 0.25, 180, 0, 'lowpass'); tone(65, 0.5, 'sine', 0.28, -35); tone(110, 0.3, 'square', 0.06, -60); },
+  shoot: () => { tone(620, 0.14, 'sawtooth', 0.045, -420); noise(0.1, 0.05, 2000); },
+  key: () => { [659, 880, 1175, 1568].forEach((f, i) => tone(f, 0.16, 'square', 0.05, 0, i * 0.07)); tone(2093, 0.4, 'sine', 0.04, 0, 0.3); },
+  portal: () => { tone(220, 1.1, 'sine', 0.1, 660); tone(330, 1.1, 'sine', 0.07, 990); noise(0.9, 0.05, 1500, 0, 'bandpass'); },
+  death: () => { [220, 196, 165, 110].forEach((f, i) => tone(f, i === 3 ? 1 : 0.32, 'square', 0.08, i === 3 ? -50 : 0, i * 0.28)); },
+  loot: (r) => {
+    const base = [262, 294, 330, 392, 440, 523][r];
+    tone(base, 0.12, 'triangle', 0.09); tone(base * 1.26, 0.12, 'triangle', 0.09, 0, 0.09); tone(base * 1.5, 0.25, 'triangle', 0.09, 0, 0.18);
+    if (r >= 4) { [2, 2.52, 3, 4].forEach((k, i) => tone(base * k, 0.3, 'square', 0.035, 0, 0.3 + i * 0.08)); noise(0.6, 0.04, 6000, 0.3); }
+  },
+  step: (alt) => { noise(0.04, 0.035, alt ? 900 : 650, 0, 'lowpass'); },
+  roar: () => { tone(130, 0.9, 'sawtooth', 0.11, -70); tone(98, 0.9, 'square', 0.06, -50); noise(0.8, 0.14, 350, 0, 'lowpass'); },
+  heart: () => { tone(62, 0.12, 'sine', 0.3, -15); tone(55, 0.14, 'sine', 0.24, -12, 0.18); },
+  ui: () => { tone(660, 0.04, 'square', 0.04); tone(990, 0.05, 'square', 0.03, 0, 0.03); },
+  pickup: () => { tone(523, 0.06, 'square', 0.05); tone(784, 0.08, 'square', 0.05, 0, 0.05); },
+  floor: () => { [57, 60, 64, 69, 72, 76, 81].forEach((m, i) => tone(midi(m), 0.3, 'triangle', 0.07, 0, i * 0.07)); noise(1, 0.04, 5000, 0.4); },
+  rageFull: () => { tone(220, 0.15, 'sawtooth', 0.05, 220); tone(440, 0.2, 'square', 0.04, 0, 0.1); },
 };
+
+// --- musique ---
+const CHORDS = {
+  Am: [45, [57, 60, 64]], F: [41, [57, 60, 65]], C: [48, [55, 60, 64]], G: [43, [55, 59, 62]], E: [40, [56, 59, 64]],
+  Dm: [38, [57, 62, 65]], Bb: [46, [58, 62, 65]], Gm: [43, [55, 58, 62]], A: [45, [57, 61, 64]], Em: [40, [55, 59, 64]],
+};
+const TRACKS = {
+  title: {
+    bpm: 66, chords: ['Am', 'F', 'C', 'E'], pad: 0.05, bass: 'r...............', bassType: 'triangle', bassVol: 0.14,
+    arp: '0.1.2.1.0.1.2.1.', arpType: 'triangle', arpVol: 0.04, arpOct: 12,
+    lead: [76, 0, 0, 0, 0, 0, 72, 0, 77, 0, 0, 0, 76, 0, 0, 0, 79, 0, 0, 0, 76, 0, 74, 0, 71, 0, 0, 0, 0, 0, 0, 0],
+    leadType: 'sine', leadVol: 0.09, leadEvery: 1, bell: true,
+  },
+  explore: {
+    bpm: 80, chords: ['Am', 'F', 'C', 'G', 'Am', 'F', 'Dm', 'E'], pad: 0.05, bass: 'r.......r.......', bassType: 'triangle', bassVol: 0.13,
+    arp: '0120012001200120', arpType: 'triangle', arpVol: 0.04, arpOct: 12,
+    drums: { h: '..h...h...h...h.' }, hatVol: 0.012,
+    lead: [76, 0, 0, 0, 74, 0, 72, 0, 72, 0, 0, 0, 69, 0, 0, 0, 72, 0, 74, 0, 76, 0, 79, 0, 74, 0, 0, 0, 0, 0, 0, 0,
+      76, 0, 0, 0, 77, 0, 76, 0, 74, 0, 72, 0, 69, 0, 0, 0, 69, 0, 72, 0, 74, 0, 77, 0, 71, 0, 0, 0, 68, 0, 0, 0],
+    leadType: 'triangle', leadVol: 0.08, leadEvery: 2, bell: true,
+  },
+  combat: {
+    bpm: 136, chords: ['Am', 'F', 'C', 'E'], bass: 'r.r.o.r.r.r.o.r.', bassType: 'sawtooth', bassVol: 0.09, bassLp: 700,
+    arp: '0120012001200120', arpType: 'square', arpVol: 0.02, arpOct: 12,
+    drums: { k: 'k.......k.k.....', s: '....s.......s...', h: 'hhhhhhhhhhhhhhhh' }, hatVol: 0.018,
+    lead: [69, 72, 76, 72, 77, 76, 74, 72, 72, 0, 69, 72, 74, 72, 69, 0, 67, 72, 76, 79, 77, 76, 74, 72, 71, 68, 71, 74, 76, 0, 0, 0],
+    leadType: 'square', leadVol: 0.04, leadEvery: 1, leadLp: 2600,
+  },
+  boss: {
+    bpm: 150, chords: ['Dm', 'Bb', 'Gm', 'A'], bass: 'rrrorrrorrrorrro', bassType: 'sawtooth', bassVol: 0.09, bassLp: 900,
+    arp: '0.2.1.2.0.2.1.2.', arpType: 'square', arpVol: 0.02, arpOct: 0, stab: true,
+    drums: { k: 'k..k..k.k..k..k.', s: '....s.......s..s', h: 'h.h.h.h.h.h.h.hh' }, hatVol: 0.022,
+    lead: [62, 65, 69, 65, 70, 69, 67, 65, 70, 0, 65, 70, 74, 72, 70, 69, 67, 70, 74, 70, 72, 70, 69, 67, 69, 73, 76, 73, 69, 0, 0, 0],
+    leadType: 'sawtooth', leadVol: 0.035, leadEvery: 1, leadLp: 2200,
+  },
+};
+const music = { track: null, target: null, step: 0, loop: 0, next: 0 };
+function setMusic(name) { music.target = name; if (actx && !music.track && name) { music.track = name; music.step = 0; music.loop = 0; music.next = actx.currentTime + 0.1; } }
+function musicTick() {
+  if (!actx || actx.state !== 'running') return;
+  if (!music.track) return;
+  if (music.next < actx.currentTime - 0.5) music.next = actx.currentTime + 0.05; // l'app revient d'une pause
+  while (music.next < actx.currentTime + 0.15) {
+    const T = TRACKS[music.track];
+    const bars = T.chords.length;
+    if (music.step % 4 === 0 && music.target !== music.track) { // changement de morceau sur le temps suivant
+      music.track = music.target; music.step = 0; music.loop = 0;
+      if (!music.track) return;
+      continue;
+    }
+    if (meta.music) playStep(T, music.step, music.next, music.loop);
+    music.next += 60 / T.bpm / 4;
+    music.step++;
+    if (music.step >= bars * 16) { music.step = 0; music.loop++; }
+  }
+}
+function playStep(T, step, t, loop) {
+  const bar = Math.floor(step / 16), s = step % 16;
+  const [root, tones] = CHORDS[T.chords[bar]];
+  const st = 60 / T.bpm / 4; // durée d'une double-croche
+  // nappe
+  if (T.pad && s === 0) for (const m of tones) { osc(musicBus, midi(m), t, st * 16, 'sawtooth', T.pad / 3, { attack: 0.5, sustain: true, release: 0.6, lp: 900, detune: rand(-8, 8) }); }
+  // basse
+  const b = T.bass[s];
+  if (b !== '.') {
+    const m = root + (b === 'o' ? 12 : b === 'f' ? 7 : 0);
+    const len = T.bass.indexOf('r', s + 1) > 0 ? st * 1.8 : st * 8;
+    osc(musicBus, midi(m), t, Math.min(len, st * (T.bpm > 120 ? 1.6 : 8)), T.bassType, T.bassVol, { lp: T.bassLp || 1200 });
+  }
+  // arpège
+  const a = T.arp[s];
+  if (a && a !== '.') osc(musicBus, midi(tones[+a] + T.arpOct), t, st * 1.5, T.arpType, T.arpVol, { lp: 3000 });
+  // accords plaqués (boss)
+  if (T.stab && (s === 0 || s === 6 || s === 12)) for (const m of tones) osc(musicBus, midi(m), t, st * 2, 'square', 0.018, { lp: 1800 });
+  // batterie
+  if (T.drums) {
+    if (T.drums.k && T.drums.k[s] === 'k') { osc(musicBus, 150, t, 0.22, 'sine', 0.35, { slide: -110 }); }
+    if (T.drums.s && T.drums.s[s] === 's') { nz(musicBus, t, 0.16, 0.13, 'bandpass', 1900, 0.8); osc(musicBus, 190, t, 0.07, 'triangle', 0.08); }
+    if (T.drums.h && T.drums.h[s] === 'h') nz(musicBus, t, 0.035, T.hatVol * (s % 4 === 2 ? 1.6 : 1), 'highpass', 7500);
+  }
+  // mélodie (toutes les croches = pas pairs)
+  if (s % 2 === 0 && loop % T.leadEvery === 0) {
+    const idx = (bar * 8 + s / 2) % T.lead.length;
+    let m = T.lead[idx];
+    if (m) {
+      if (loop % 4 === 3 && Math.random() < 0.3) m += 12; // petite variation
+      let dur = st * 2;
+      for (let k = idx + 1; k < T.lead.length && !T.lead[k] && dur < st * 8; k++) dur += st * 2;
+      osc(musicBus, midi(m), t, dur * 0.95, T.leadType, T.leadVol, { lp: T.leadLp, attack: T.bell ? 0.005 : 0.01 });
+      if (T.bell) osc(musicBus, midi(m + 12), t, dur * 0.6, 'sine', T.leadVol * 0.3);
+    }
+  }
+}
 
 // ============================================================
 // 4. ÉCRAN
@@ -574,6 +742,7 @@ function enterRoom(room) {
     SFX.lock();
     const elite = alive.find((e) => e.d.elite);
     toast(elite ? `☠ ${elite.d.name} ☠` : 'La salle se verrouille !', elite ? '#ff6a5a' : '#ffb07a', 1.4);
+    if (elite) { SFX.roar(); G.shake = 5; }
   } else if (!room.enemies.length) room.cleared = true;
   if (room.type === 'vault' && room.sealed) toast('Salle scellée', '#ffcf4a', 1);
 }
@@ -618,7 +787,7 @@ function openChest(c) {
 function collect(k) {
   const p = G.p;
   if (k.type === 'coin') { p.gold += k.value; SFX.coin(); updateHUD(); }
-  if (k.type === 'potion') { if (p.potions >= 5) return false; p.potions++; toast('Potion de soin', '#ff6a6a', 1); SFX.coin(); updateHUD(); }
+  if (k.type === 'potion') { if (p.potions >= 5) return false; p.potions++; toast('Potion de soin', '#ff6a6a', 1); SFX.pickup(); updateHUD(); }
   if (k.type === 'key') { p.keys++; toast('Clé de la Faille obtenue !', '#ffcf4a', 1.6); SFX.key(); updateHUD(); }
   if (k.type === 'weapon') {
     const w = k.w, R = RARITY[w.rarity];
@@ -665,6 +834,7 @@ function nextFloor() {
     updateHUD(true);
     $('fade').classList.remove('on');
     toast(`Étage ${G.floorN}`, '#c9a2ff', 1.8);
+    SFX.floor();
     state = 'play';
   }, 450);
 }
@@ -728,6 +898,8 @@ function update(dt) {
       move(p, mx * speed * dt, my * speed * dt);
       if (p.swing <= 0 && p.whirl <= 0) { p.fx = mx / (ml || 1); p.fy = my / (ml || 1); if (Math.abs(mx) > 0.15) p.dir = mx > 0 ? 1 : -1; }
       if (Math.random() < dt * 8) G.parts.push({ x: p.x + rand(-3, 3), y: p.y + 2, vx: rand(-6, 6), vy: rand(-8, -2), life: 0.35, c: 'rgba(170,150,190,.6)', s: 1 });
+      p.stepT = (p.stepT || 0) + dt;
+      if (p.stepT > 0.27) { p.stepT = 0; p.stepAlt = !p.stepAlt; SFX.step(p.stepAlt); }
     }
   }
   if (p.kvx || p.kvy) { move(p, p.kvx * dt, p.kvy * dt); p.kvx *= Math.pow(0.0005, dt); p.kvy *= Math.pow(0.0005, dt); if (Math.abs(p.kvx) + Math.abs(p.kvy) < 2) p.kvx = p.kvy = 0; }
@@ -744,6 +916,10 @@ function update(dt) {
     if (Math.random() < dt * 30) { const a = rand(0, 6.28); G.parts.push({ x: p.x + Math.cos(a) * 22, y: p.y - 6 + Math.sin(a) * 16, vx: -Math.sin(a) * 60, vy: Math.cos(a) * 60, life: 0.2, c: '#ffffff', s: 1 }); }
   }
 
+  // battement de cœur quand la vie est basse
+  if (p.hp / p.maxHp < 0.3) { G.heartT = (G.heartT || 0) - dt; if (G.heartT <= 0) { G.heartT = 1.05; SFX.heart(); } }
+  if (p.rage >= 35 && (G.lastRage || 0) < 35) SFX.rageFull();
+  G.lastRage = p.rage;
   // rage qui retombe hors combat
   if (!G.room || !G.room.locked) p.rage = Math.max(0, p.rage - dt * 4);
 
@@ -1360,8 +1536,8 @@ function showTitle() {
   $('titleStats').textContent = parts.join(' · ');
   showScreen('title');
 }
-function pause() { if (state !== 'play') return; state = 'pause'; input.attackHeld = false; input.mx = input.my = 0; showScreen('pause'); }
-function resume() { showScreen(null); state = 'play'; last = performance.now(); }
+function pause() { if (state !== 'play') return; state = 'pause'; input.attackHeld = false; input.mx = input.my = 0; showScreen('pause'); muffleMusic(true); }
+function resume() { showScreen(null); state = 'play'; last = performance.now(); muffleMusic(false); }
 function setupScreens() {
   $('newBtn').onclick = () => { audioUnlock(); store.del('rw_run'); startRun(null); refreshIcons(); toast('Étage 1', '#c9a2ff', 1.6); };
   $('continueBtn').onclick = () => { audioUnlock(); const r = store.get('rw_run', null); if (r) { startRun(r); refreshIcons(); toast(`Étage ${r.floor}`, '#c9a2ff', 1.6); } };
@@ -1369,10 +1545,18 @@ function setupScreens() {
   $('helpBack').onclick = () => showScreen('title');
   $('pauseBtn').addEventListener('pointerdown', (e) => { e.preventDefault(); pause(); });
   $('resumeBtn').onclick = resume;
-  const sl = () => { $('soundBtn').textContent = 'Son : ' + (meta.sound ? 'activé' : 'coupé'); };
+  const sl = () => {
+    document.querySelectorAll('.musicBtn').forEach((b) => { b.textContent = 'Musique : ' + (meta.music ? 'oui' : 'non'); });
+    document.querySelectorAll('.sfxBtn').forEach((b) => { b.textContent = 'Effets : ' + (meta.sound ? 'oui' : 'non'); });
+  };
   sl();
-  $('soundBtn').onclick = () => { meta.sound = !meta.sound; saveMeta(); sl(); };
-  $('quitBtn').onclick = () => { if (G) { meta.gold += G.p.gold; saveMeta(); } store.del('rw_run'); G = null; showTitle(); };
+  document.querySelectorAll('.musicBtn').forEach((b) => { b.onclick = () => { audioUnlock(); meta.music = !meta.music; saveMeta(); setVolumes(); sl(); }; });
+  document.querySelectorAll('.sfxBtn').forEach((b) => { b.onclick = () => { audioUnlock(); meta.sound = !meta.sound; saveMeta(); setVolumes(); sl(); SFX.ui(); }; });
+  // petit clic sur tous les boutons de menu
+  document.querySelectorAll('.screen button').forEach((b) => b.addEventListener('pointerdown', () => { audioUnlock(); SFX.ui(); }));
+  // le premier toucher sur l'écran titre lance la musique (iOS l'exige)
+  document.addEventListener('pointerdown', () => audioUnlock(), { passive: true });
+  $('quitBtn').onclick = () => { if (G) { meta.gold += G.p.gold; saveMeta(); } store.del('rw_run'); G = null; muffleMusic(false); showTitle(); };
   $('retryBtn').onclick = () => { startRun(null); refreshIcons(); toast('Étage 1', '#c9a2ff', 1.6); };
   $('menuBtn').onclick = showTitle;
 }
@@ -1385,6 +1569,12 @@ function frame(now) {
   requestAnimationFrame(frame);
   const dt = Math.min(1 / 30, (now - last) / 1000);
   last = now;
+  if (state === 'title') setMusic('title');
+  else if (state === 'dead') setMusic(null);
+  else if (G && (state === 'play' || state === 'pause')) {
+    const r = G.room;
+    setMusic(r && r.locked ? (r.enemies.some((e) => !e.dead && e.d.elite) ? 'boss' : 'combat') : 'explore');
+  }
   if (!G) { ctx.fillStyle = '#0b0712'; ctx.fillRect(0, 0, VW, VH); return; }
   if (state === 'play') { update(dt); hudFrame(); }
   else if (state === 'dead') { G.time += dt; for (const pt of G.parts) { pt.life -= dt; pt.x += pt.vx * dt; pt.y += pt.vy * dt; } }
@@ -1406,4 +1596,4 @@ async function boot() {
 boot();
 
 // accès pour les tests
-window.__rw = { get G() { return G; }, get state() { return state; }, startRun, nextFloor, doAttack, doCharge, doWhirl };
+window.__rw = { get G() { return G; }, get state() { return state; }, get music() { return music; }, get actx() { return actx; }, SFX, startRun, nextFloor, doAttack, doCharge, doWhirl };

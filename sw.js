@@ -1,6 +1,6 @@
 // Service worker : garde une copie du jeu dans le téléphone pour jouer hors ligne.
 // Change VERSION à chaque mise à jour pour que les téléphones récupèrent la nouvelle version.
-const VERSION = 'riftwalker-v1.0.0';
+const VERSION = 'riftwalker-v1.1.0';
 const FILES = [
   './', 'index.html', 'style.css', 'game.js', 'manifest.json',
   'assets/atlas.png', 'assets/atlas.json',
