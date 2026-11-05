@@ -11,9 +11,13 @@ Roguelike de donjons pour iPhone (site web jouable hors ligne).
 - Butin aux couleurs de rareté façon WoW
 - Sauvegarde automatique à chaque étage, jouable hors ligne
 - Musique et bruitages synthétisés (thèmes menu, exploration, combat, gardien)
+- Trois styles graphiques au choix (menu Graphismes) : Classique, Pixel HD, Cel-shading 3D
 
 ## Crédits
 - Graphismes : [0x72 — Dungeon Tileset II](https://0x72.itch.io/dungeontileset-ii) (CC0)
+- Personnages du mode Pixel HD : Liberated Pixel Cup (CC-BY-SA / OGA-BY / GPL), auteurs détaillés dans `CREDITS-LPC.txt`
+- Modèles 3D : Kay Lousberg — KayKit Adventurers, Skeletons, Dungeon (CC0) ; Quaternius — Modular Dungeon (CC0)
+- Moteur 3D : Three.js (licence MIT)
 - Police : Pixelify Sans (SIL Open Font License)
 
 ## Publier une mise à jour

@@ -1,11 +1,15 @@
 // Service worker : garde une copie du jeu dans le téléphone pour jouer hors ligne.
 // À chaque mise à jour, changer VERSION ici + APP_VERSION dans game.js + version.json.
-const VERSION = 'riftwalker-1.3.0';
+const VERSION = 'riftwalker-1.4.0';
 const FILES = [
   './', 'index.html', 'style.css', 'game.js', 'manifest.json',
   'assets/atlas.png', 'assets/atlas.json',
   'assets/icon-180.png', 'assets/icon-192.png', 'assets/icon-512.png',
   'assets/fonts/pixelify-sans-latin-400-normal.woff2', 'assets/fonts/pixelify-sans-latin-700-normal.woff2',
+  'assets/atlas2x.png', 'assets/hd_chars.png', 'assets/hd_chars.json',
+  'r3d.js', 'vendor/three.module.min.js', 'vendor/jsm/loaders/GLTFLoader.js', 'vendor/jsm/utils/BufferGeometryUtils.js', 'vendor/jsm/utils/SkeletonUtils.js',
+  'assets/3d/knight.glb', 'assets/3d/mage.glb', 'assets/3d/skeleton.glb', 'assets/3d/dungeon.glb', 'assets/3d/props.glb',
+  'assets/3d/anim_general.glb', 'assets/3d/anim_movementbasic.glb', 'assets/3d/anim_combatmelee.glb', 'assets/3d/anim_combatranged.glb', 'assets/3d/anim_special.glb',
 ];
 
 self.addEventListener('install', (e) => {

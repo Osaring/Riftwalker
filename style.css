@@ -108,3 +108,6 @@ h2.red { color: #ff6a5a; }
 .classCard:active { transform: translateY(2px); box-shadow: inset 0 0 0 2px #a46bff, 0 2px 0 #000; }
 #classBack { font-size: 16px; padding: 10px 28px; background: rgba(30,20,45,.8); border: 2px solid #000; box-shadow: inset 0 0 0 2px #3a2a4d, 0 3px 0 #000; }
 @media (max-height: 500px) { .cards { width: min(94vw, 640px); } .classCard canvas { width: 48px; height: 84px; } .classCard { padding: 8px; } }
+
+canvas#game3d { position: fixed; left: 0; top: 0; display: none; }
+body.cel canvas#game { z-index: 1; image-rendering: auto; }

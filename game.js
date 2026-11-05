@@ -1,7 +1,7 @@
 /* RIFTWALKER — roguelike de donjons (V1 : le Guerrier)
    Tout le jeu tient dans ce fichier. Graphismes : 0x72 Dungeon Tileset II (CC0). */
 'use strict';
-const APP_VERSION = '1.3.0';
+const APP_VERSION = '1.4.0';
 
 // ============================================================
 // 1. OUTILS
@@ -35,6 +35,7 @@ const store = {
 };
 let meta = store.get('rw_meta', { gold: 0, bestFloor: 0, sound: true, music: true, runs: 0 });
 if (meta.music === undefined) meta.music = true;
+if (!meta.gfx) meta.gfx = 'classic';
 if (meta.sound === undefined) meta.sound = true;
 const saveMeta = () => store.set('rw_meta', meta);
 
@@ -42,6 +43,11 @@ const saveMeta = () => store.set('rw_meta', meta);
 // 2. GRAPHISMES
 // ============================================================
 let atlas, atlasWhite, atlasRed, atlasIce, SPR;
+// Mode graphique : 'classic' (pixel 16 px), 'hd' (pixel détaillé), 'cel' (3D cel-shading)
+let GFX = 'classic', RES = 1;
+const TWIN = new Map();          // atlas classique -> sa version agrandie 2x
+let hdImg = null, HDS = null;    // personnages détaillés (LPC)
+const tintCache = new Map();
 async function loadAssets() {
   const [json] = await Promise.all([
     fetch('assets/atlas.json').then((r) => r.json()),
@@ -52,6 +58,15 @@ async function loadAssets() {
   atlasWhite = tinted('#ffffff');
   atlasRed = tinted('#ff3a2a');
   atlasIce = tinted('#bdf0ff');
+  // version 2x (Scale2x) pour le mode HD
+  const [hdJson, a2] = await Promise.all([
+    fetch('assets/hd_chars.json').then((r) => r.json()),
+    new Promise((res, rej) => { const i = new Image(); i.onload = () => res(i); i.onerror = rej; i.src = 'assets/atlas2x.png'; }),
+    new Promise((res, rej) => { hdImg = new Image(); hdImg.onload = res; hdImg.onerror = rej; hdImg.src = 'assets/hd_chars.png'; }),
+  ]);
+  HDS = hdJson;
+  const tint2 = (color) => { const c = document.createElement('canvas'); c.width = a2.width; c.height = a2.height; const x = c.getContext('2d'); x.drawImage(a2, 0, 0); x.globalCompositeOperation = 'source-in'; x.fillStyle = color; x.fillRect(0, 0, c.width, c.height); return c; };
+  TWIN.set(atlas, a2); TWIN.set(atlasWhite, tint2('#ffffff')); TWIN.set(atlasRed, tint2('#ff3a2a')); TWIN.set(atlasIce, tint2('#bdf0ff'));
 }
 function tinted(color) {
   const c = document.createElement('canvas');
@@ -63,18 +78,21 @@ function tinted(color) {
   return c;
 }
 function spr(ctx, name, x, y, opt) {
-  const r = SPR[name];
-  if (!r) return;
-  const img = opt && opt.img ? opt.img : atlas;
+  const r0 = SPR[name];
+  if (!r0) return;
+  let img = opt && opt.img ? opt.img : atlas;
+  let r = r0;
+  if (ctx._hd && TWIN.has(img)) { img = TWIN.get(img); r = [r0[0] * 2, r0[1] * 2, r0[2] * 2, r0[3] * 2]; }
+  const dw = r0[2], dh = r0[3];
   if (opt && (opt.flip || opt.rot)) {
     ctx.save();
-    ctx.translate(Math.round(x + r[2] / 2), Math.round(y + r[3] / 2));
+    ctx.translate(Math.round(x + dw / 2), Math.round(y + dh / 2));
     if (opt.flip) ctx.scale(-1, 1);
     if (opt.rot) ctx.rotate(opt.rot);
-    ctx.drawImage(img, r[0], r[1], r[2], r[3], -r[2] / 2, -r[3] / 2, r[2], r[3]);
+    ctx.drawImage(img, r[0], r[1], r[2], r[3], -dw / 2, -dh / 2, dw, dh);
     ctx.restore();
   } else {
-    ctx.drawImage(img, r[0], r[1], r[2], r[3], Math.round(x), Math.round(y), r[2], r[3]);
+    ctx.drawImage(img, r[0], r[1], r[2], r[3], Math.round(x), Math.round(y), dw, dh);
   }
 }
 const sprSize = (name) => SPR[name] || [0, 0, 16, 16];
@@ -313,12 +331,16 @@ let VW = 240, VH = 400, SCALE = 4;
 function resize() {
   const dpr = window.devicePixelRatio || 1;
   const dw = window.innerWidth * dpr, dh = window.innerHeight * dpr;
-  SCALE = Math.max(2, Math.floor(Math.min(dw, dh) / 200));
-  VW = Math.ceil(dw / SCALE); VH = Math.ceil(dh / SCALE);
-  canvas.width = VW; canvas.height = VH;
-  canvas.style.width = (VW * SCALE / dpr) + 'px';
-  canvas.style.height = (VH * SCALE / dpr) + 'px';
-  lightCv.width = VW; lightCv.height = VH;
+  RES = GFX === 'hd' ? 2 : 1;
+  // classique : ~200 pixels de jeu sur le petit côté ; HD : 2x plus de détails
+  SCALE = RES === 2 ? Math.max(1, Math.floor(Math.min(dw, dh) / 380)) : Math.max(2, Math.floor(Math.min(dw, dh) / 200));
+  const cw = Math.ceil(dw / SCALE), ch = Math.ceil(dh / SCALE);
+  canvas.width = cw; canvas.height = ch;
+  VW = cw / RES; VH = ch / RES;
+  canvas.style.width = (cw * SCALE / dpr) + 'px';
+  canvas.style.height = (ch * SCALE / dpr) + 'px';
+  lightCv.width = cw; lightCv.height = ch;
+  ctx._hd = RES === 2;
   ctx.imageSmoothingEnabled = false;
 }
 window.addEventListener('resize', resize);
@@ -571,7 +593,7 @@ function startRun(fromSave, cls) {
 
 function enterFloor(floorN, seed) {
   const D = generateFloor(floorN, seed);
-  G.D = D; G.floorN = floorN;
+  G.D = D; G.floorN = floorN; G.MW = MW; G.MH = MH;
   G.enemies = []; G.chests = []; G.pickups = []; G.projs = []; G.fire = []; G.fx = []; G.parts = []; G.texts = []; G.tele = [];
   G.barrier = new Uint8Array(MW * MH);
   G.explored = new Uint8Array(MW * MH);
@@ -678,6 +700,7 @@ function releaseFireball() {
   if (t) face(p, t.x, t.y - 4);
   p.mana -= MAGE.fireCost;
   p.cd.attack = p.cdMax.attack;
+  p.castFx = 0.2;
   const sp = 200;
   G.fire.push({ x: p.x + p.fx * 8, y: p.y - 9 + p.fy * 6, vx: p.fx * sp, vy: p.fy * sp, life: 1.4, dmg: p.weapon.dmg });
   SFX.fire();
@@ -725,7 +748,7 @@ function doNova() {
   const p = G.p;
   if (p.cd.whirl > 0) return;
   if (p.mana < MAGE.novaCost) { toast('Pas assez de mana', '#7ab8ff', 0.9); return; }
-  p.mana -= MAGE.novaCost; p.cd.whirl = p.cdMax.whirl; p.casting = 0;
+  p.mana -= MAGE.novaCost; p.cd.whirl = p.cdMax.whirl; p.casting = 0; p.castFx = 0.3;
   G.fx.push({ type: 'ring', x: p.x, y: p.y, t: 0.4, T: 0.4, r0: 6, r1: 48, c: '#bdf0ff', w: 3 });
   G.fx.push({ type: 'ring', x: p.x, y: p.y, t: 0.5, T: 0.5, r0: 2, r1: 36, c: '#ffffff' });
   for (let i = 0; i < 30; i++) { const a = rand(0, 6.28); G.parts.push({ x: p.x, y: p.y - 4, vx: Math.cos(a) * rand(40, 120), vy: Math.sin(a) * rand(30, 80), life: rand(0.3, 0.6), c: pick(['#bdf0ff', '#ffffff', '#6ac8ff']), s: rand(1, 2) }); }
@@ -976,6 +999,7 @@ function update(dt) {
 
   for (const k in p.cd) p.cd[k] = Math.max(0, p.cd[k] - dt);
   p.inv = Math.max(0, p.inv - dt); p.hurtT = Math.max(0, p.hurtT - dt); p.swing = Math.max(0, p.swing - dt);
+  p.castFx = Math.max(0, (p.castFx || 0) - dt);
   if (input.attackHeld) actMain();
 
   // --- déplacement ---
@@ -1217,10 +1241,12 @@ let mapCv = null;
 function prerenderMap() {
   const D = G.D;
   mapCv = document.createElement('canvas');
-  mapCv.width = MW * TILE; mapCv.height = MH * TILE;
+  mapCv.width = MW * TILE * RES; mapCv.height = MH * TILE * RES;
+  mapCv._res = RES;
   const m = mapCv.getContext('2d');
+  m.scale(RES, RES); m._hd = RES === 2;
   m.imageSmoothingEnabled = false;
-  m.fillStyle = '#07050b'; m.fillRect(0, 0, mapCv.width, mapCv.height);
+  m.fillStyle = '#07050b'; m.fillRect(0, 0, MW * TILE, MH * TILE);
   const F = (x, y) => isFloor(x, y);
   const face = (x, y) => !F(x, y) && (F(x, y + 1) || F(x, y - 1)) && x >= 0 && y >= 0 && x < MW && y < MH;
   for (let y = 0; y < MH; y++) for (let x = 0; x < MW; x++) {
@@ -1253,12 +1279,14 @@ function render() {
   const p = G.p;
   const sx = (Math.random() - 0.5) * G.shake, sy = (Math.random() - 0.5) * G.shake;
   const cx = Math.round(G.cam.x - VW / 2 + sx), cy = Math.round(G.cam.y - VH / 2 + sy);
-  ctx.setTransform(1, 0, 0, 1, 0, 0);
+  if (mapCv._res !== RES) prerenderMap();
+  baseT(ctx);
   ctx.fillStyle = '#07050b'; ctx.fillRect(0, 0, VW, VH);
   // carte
-  const srcX = clamp(cx, 0, mapCv.width), srcY = clamp(cy, 0, mapCv.height);
-  const w = Math.min(VW - (srcX - cx), mapCv.width - srcX), h = Math.min(VH - (srcY - cy), mapCv.height - srcY);
-  if (w > 0 && h > 0) ctx.drawImage(mapCv, srcX, srcY, w, h, srcX - cx, srcY - cy, w, h);
+  const MWp = MW * TILE, MHp = MH * TILE;
+  const srcX = clamp(cx, 0, MWp), srcY = clamp(cy, 0, MHp);
+  const w = Math.min(VW - (srcX - cx), MWp - srcX), h = Math.min(VH - (srcY - cy), MHp - srcY);
+  if (w > 0 && h > 0) ctx.drawImage(mapCv, srcX * RES, srcY * RES, w * RES, h * RES, srcX - cx, srcY - cy, w, h);
   ctx.translate(-cx, -cy);
   const t = G.time;
 
@@ -1365,7 +1393,7 @@ function render() {
   renderLights(cx, cy);
 
   // textes de combat (au-dessus de l'obscurité)
-  ctx.setTransform(1, 0, 0, 1, -cx, -cy);
+  baseT(ctx, -cx, -cy);
   ctx.textAlign = 'center';
   for (const tx of G.texts) {
     const k = tx.t / tx.T;
@@ -1393,7 +1421,7 @@ function render() {
     ctx.fillStyle = '#5a1010'; ctx.fillRect(bx, by, bw, 2);
     ctx.fillStyle = e.d.elite ? '#ff8a2a' : '#e8402a'; ctx.fillRect(bx, by, Math.ceil(bw * e.hp / e.maxHp), 2);
   }
-  ctx.setTransform(1, 0, 0, 1, 0, 0);
+  baseT(ctx);
   // voile rouge quand on est touché
   if (p.hurtT > 0) { ctx.fillStyle = `rgba(200,20,20,${p.hurtT * 0.8})`; ctx.fillRect(0, 0, VW, VH); }
   if (p.hp / p.maxHp < 0.3 && state === 'play') {
@@ -1404,6 +1432,142 @@ function render() {
   }
 }
 
+function baseT(c, tx = 0, ty = 0) { c.setTransform(RES, 0, 0, RES, tx * RES, ty * RES); }
+
+// ---------- personnages détaillés (mode HD) ----------
+const dirOf = (fx, fy) => (Math.abs(fx) > Math.abs(fy) ? (fx > 0 ? 'right' : 'left') : (fy > 0 ? 'down' : 'up'));
+function tintedFrame(key, color) {
+  const ck = key + color;
+  let c = tintCache.get(ck);
+  if (!c) {
+    const r = HDS[key];
+    c = document.createElement('canvas'); c.width = r[2]; c.height = r[3];
+    const x = c.getContext('2d');
+    x.drawImage(hdImg, r[0], r[1], r[2], r[3], 0, 0, r[2], r[3]);
+    x.globalCompositeOperation = 'source-in'; x.fillStyle = color; x.fillRect(0, 0, r[2], r[3]);
+    tintCache.set(ck, c);
+  }
+  return c;
+}
+function drawHD(key, x, y, sc = 1, tint, alpha) {
+  const r = HDS[key];
+  if (!r) return false;
+  const k = 0.5 * sc;
+  const dx = x + r[4] * k, dy = y + r[5] * k + 2;
+  if (!tint) ctx.drawImage(hdImg, r[0], r[1], r[2], r[3], dx, dy, r[2] * k, r[3] * k);
+  else {
+    ctx.save(); if (alpha != null) ctx.globalAlpha = alpha;
+    ctx.drawImage(tintedFrame(key, tint), dx, dy, r[2] * k, r[3] * k);
+    ctx.restore();
+  }
+  return true;
+}
+function playerHDKey(p) {
+  const base = p.cls === 'mage' ? 'p_mage' : 'p_warrior';
+  const d = dirOf(p.fx, p.fy);
+  if (p.hurtT > 0) return `${base}_hurt_down_2`;
+  if (p.cls === 'mage') {
+    if (p.casting > 0) return `${base}_spell_${d}_${Math.min(4, Math.floor((1 - p.casting / p.castT) * 5))}`;
+    if (p.castFx > 0) return `${base}_spell_${d}_${p.castFx > 0.1 ? 5 : 6}`;
+  } else {
+    if (p.whirl > 0) return `${base}_slash_${['down', 'left', 'up', 'right'][Math.floor(G.time * 18) % 4]}_4`;
+    if (p.swing > 0) return `${base}_slash_${d}_${Math.min(5, Math.floor((1 - p.swing / 0.2) * 6))}`;
+  }
+  if (p.moving || p.charging > 0) return `${base}_walk_${d}_${1 + (Math.floor(p.anim) % 8)}`;
+  return `${base}_walk_${d}_0`;
+}
+function drawPlayerHD() {
+  const p = G.p;
+  for (const tr of p.trail) drawHD(playerHDKey(p), tr.x, tr.y, 1, '#ffffff', tr.t * 1.4);
+  shadow(p.x, p.y, 6);
+  const key = playerHDKey(p);
+  drawHD(key, p.x, p.y);
+  if (p.hurtT > 0.15) drawHD(key, p.x, p.y, 1, '#ffffff', 0.8);
+  if (p.cls === 'mage' && p.casting > 0) {
+    const k = 1 - p.casting / p.castT, s = 2 + k * 3;
+    const hx = p.x + (dirOf(p.fx, p.fy) === 'left' ? -5 : dirOf(p.fx, p.fy) === 'right' ? 5 : 0), hy = p.y - 30;
+    ctx.fillStyle = '#ff7a2a'; ctx.fillRect(hx - s / 2 - 1, hy - s / 2 - 1, s + 2, s + 2);
+    ctx.fillStyle = '#ffe07a'; ctx.fillRect(hx - s / 2, hy - s / 2, s, s);
+  }
+}
+function enemyHDKey(e) {
+  const d = dirOf(G.p.x - e.x, G.p.y - e.y);
+  const ranged = !!e.d.ranged;
+  if (e.state === 'windup') return ranged ? `${e.kind}_spell_${d}_${Math.min(4, 1 + Math.floor((1 - e.t / e.d.windup) * 4))}` : `${e.kind}_slash_${d}_1`;
+  if (e.state === 'slam') return `${e.kind}_slash_${d}_1`;
+  if (e.state === 'recover' && e.t > 0.12) return ranged ? `${e.kind}_spell_${d}_5` : `${e.kind}_slash_${d}_4`;
+  if (e.moving) return `${e.kind}_walk_${d}_${1 + (Math.floor(e.anim) % 8)}`;
+  return `${e.kind}_walk_${d}_0`;
+}
+function drawEnemyHD(e) {
+  const key = enemyHDKey(e);
+  if (!HDS[key]) return false;
+  const sc = e.d.elite ? 2 : 1;
+  const charging = e.state === 'windup' || e.state === 'slam';
+  const ox = charging ? rand(-0.6, 0.6) : 0;
+  shadow(e.x, e.y, e.d.elite ? 12 : 5);
+  drawHD(key, e.x + ox, e.y, sc);
+  if (e.flash > 0) drawHD(key, e.x + ox, e.y, sc, '#ffffff', 0.9);
+  else if (e.frozen > 0) drawHD(key, e.x, e.y, sc, '#bdf0ff', 0.6);
+  else if (charging) drawHD(key, e.x + ox, e.y, sc, '#ff3a2a', 0.3 + 0.3 * Math.sin(G.time * 30));
+  const top = Math.round(e.y - sprH(e) - 4);
+  if (charging && e.flash <= 0 && !(e.frozen > 0)) { ctx.fillStyle = '#ff4a3a'; ctx.fillRect(Math.round(e.x) - 1, top - 6, 2, 4); ctx.fillRect(Math.round(e.x) - 1, top - 1, 2, 2); }
+  if (e.stun > 0) for (let i = 0; i < 3; i++) { const a = G.time * 6 + i * 2.1; ctx.fillStyle = '#ffe58a'; ctx.fillRect(Math.round(e.x + Math.cos(a) * 6), Math.round(top + 2 + Math.sin(a) * 2), 2, 2); }
+  return true;
+}
+
+// En mode 3D, le canevas 2D ne dessine plus que les textes et barres par-dessus la scène
+function renderOverlay3D() {
+  const p = G.p;
+  ctx.setTransform(1, 0, 0, 1, 0, 0);
+  ctx.clearRect(0, 0, canvas.width, canvas.height);
+  const k = canvas.width / window.innerWidth;
+  const P = (x, y, h) => { const r = R3D.project(x, y, h); return [r[0] * k, r[1] * k, r[2]]; };
+  // barres de vie des ennemis + signal d'attaque
+  for (const e of G.enemies) {
+    if (e.dead || !e.active) continue;
+    const look = { big_zombie: 1.9, ogre: 2, big_demon: 2.15, goblin: 0.8, imp: 0.8, tiny_zombie: 0.85 }[e.kind] || 1;
+    const [x, y, ok] = P(e.x, e.y, e.kind === 'mimic' ? 0.7 : 1.3 * look);
+    if (!ok) continue;
+    if (e.hp < e.maxHp) {
+      const bw = e.d.elite ? 28 : 15, bx = Math.round(x - bw / 2), by = Math.round(y - 6);
+      ctx.fillStyle = '#000'; ctx.fillRect(bx - 1, by - 1, bw + 2, 4);
+      ctx.fillStyle = '#5a1010'; ctx.fillRect(bx, by, bw, 2);
+      ctx.fillStyle = e.d.elite ? '#ff8a2a' : '#e8402a'; ctx.fillRect(bx, by, Math.ceil(bw * e.hp / e.maxHp), 2);
+    }
+    if ((e.state === 'windup' || e.state === 'slam') && !(e.frozen > 0)) { ctx.fillStyle = '#ff4a3a'; ctx.fillRect(Math.round(x) - 1, Math.round(y) - 16, 2, 5); ctx.fillRect(Math.round(x) - 1, Math.round(y) - 9, 2, 2); }
+    if (e.stun > 0) for (let i = 0; i < 3; i++) { const a = G.time * 6 + i * 2.1; ctx.fillStyle = '#ffe58a'; ctx.fillRect(Math.round(x + Math.cos(a) * 6), Math.round(y - 12 + Math.sin(a) * 2), 2, 2); }
+  }
+  // barre d'incantation
+  if (p.cls === 'mage' && p.casting > 0) {
+    const [x, y] = P(p.x, p.y, 1.75);
+    const kk = 1 - p.casting / p.castT, bw = 24, bx = Math.round(x - bw / 2), by = Math.round(y - 4);
+    ctx.fillStyle = '#000'; ctx.fillRect(bx - 1, by - 1, bw + 2, 5);
+    ctx.fillStyle = '#3a2008'; ctx.fillRect(bx, by, bw, 3);
+    ctx.fillStyle = '#ffb02a'; ctx.fillRect(bx, by, Math.round(bw * kk), 3);
+  }
+  // nombres de dégâts
+  ctx.textAlign = 'center';
+  for (const tx of G.texts) {
+    const [x, y, ok] = P(tx.x, tx.y + 18, 1.3);
+    if (!ok) continue;
+    const kk = tx.t / tx.T;
+    const s = tx.crit ? tx.size * (1 + Math.max(0, kk - 0.8) * 3) : tx.size;
+    ctx.font = `700 ${Math.round(s)}px Pixel, monospace`;
+    ctx.globalAlpha = Math.min(1, kk * 2.5);
+    ctx.lineWidth = 2; ctx.strokeStyle = '#000'; ctx.strokeText(tx.text, Math.round(x), Math.round(y));
+    ctx.fillStyle = tx.color; ctx.fillText(tx.text, Math.round(x), Math.round(y));
+  }
+  ctx.globalAlpha = 1;
+  if (p.hurtT > 0) { ctx.fillStyle = `rgba(200,20,20,${p.hurtT * 0.7})`; ctx.fillRect(0, 0, canvas.width, canvas.height); }
+  if (p.hp / p.maxHp < 0.3 && state === 'play') {
+    const W = canvas.width, H = canvas.height, a = 0.12 + 0.08 * Math.sin(G.time * 5);
+    const g = ctx.createRadialGradient(W / 2, H / 2, Math.min(W, H) * 0.3, W / 2, H / 2, Math.max(W, H) * 0.7);
+    g.addColorStop(0, 'rgba(120,0,0,0)'); g.addColorStop(1, `rgba(150,0,0,${a * 3})`);
+    ctx.fillStyle = g; ctx.fillRect(0, 0, W, H);
+  }
+}
+
 function shadow(x, y, w) {
   ctx.fillStyle = 'rgba(0,0,0,.35)';
   ctx.beginPath(); ctx.ellipse(Math.round(x), Math.round(y + 1), w, w * 0.4, 0, 0, 6.29); ctx.fill();
@@ -1411,6 +1575,7 @@ function shadow(x, y, w) {
 function drawPlayer() {
   const p = G.p;
   if (p.inv > 0 && p.hurtT <= 0 && p.charging <= 0 && Math.floor(G.time * 20) % 2) return;
+  if (GFX === 'hd') return drawPlayerHD();
   for (const tr of p.trail) {
     ctx.save(); ctx.globalAlpha = tr.t * 1.6;
     spr(ctx, 'knight_m_run_anim_f1', tr.x - 8, tr.y - 24, { flip: p.dir < 0, img: atlasWhite });
@@ -1444,7 +1609,8 @@ function drawWeapon() {
   ctx.translate(Math.round(hx), Math.round(hy));
   ctx.rotate(ang + Math.PI / 2);
   const r = SPR[w];
-  ctx.drawImage(atlas, r[0], r[1], ww, wh, -ww / 2, -wh + 2, ww, wh);
+  if (ctx._hd) ctx.drawImage(TWIN.get(atlas), r[0] * 2, r[1] * 2, ww * 2, wh * 2, -ww / 2, -wh + 2, ww, wh);
+  else ctx.drawImage(atlas, r[0], r[1], ww, wh, -ww / 2, -wh + 2, ww, wh);
   if (p.cls === 'mage' && p.casting > 0) {
     const k = 1 - p.casting / p.castT;
     const s = 2 + Math.round(k * 3);
@@ -1455,6 +1621,7 @@ function drawWeapon() {
 }
 function drawEnemy(e) {
   const d = e.d;
+  if (GFX === 'hd' && drawEnemyHD(e)) return;
   const fr = Math.floor(e.anim) % (d.noAnim ? 3 : 4);
   let name;
   if (e.kind === 'mimic') name = 'chest_mimic_open_anim_f' + (e.state === 'windup' ? 2 : fr % 3);
@@ -1538,7 +1705,7 @@ function renderLights(cx, cy) {
   if (G.D.vault && G.D.vault.sealed) { const d = G.D.vault.doors[0]; lights.push([d.x * TILE + 8, d.y * TILE + 8, 30, 'gold', 0.2]); }
   for (const tl of G.tele) lights.push([tl.x, tl.y, tl.r + 10, 'fire', 0.25]);
 
-  lctx.setTransform(1, 0, 0, 1, 0, 0);
+  lctx.setTransform(RES, 0, 0, RES, 0, 0);
   lctx.globalCompositeOperation = 'source-over';
   lctx.fillStyle = 'rgba(4,2,10,0.93)';
   lctx.fillRect(0, 0, VW, VH);
@@ -1551,6 +1718,7 @@ function renderLights(cx, cy) {
   }
   ctx.setTransform(1, 0, 0, 1, 0, 0);
   ctx.drawImage(lightCv, 0, 0);
+  baseT(ctx);
   // halo coloré (lumière chaude)
   ctx.globalCompositeOperation = 'lighter';
   for (const [x, y, r, kind, a] of lights) {
@@ -1800,6 +1968,14 @@ function setupScreens() {
     document.querySelectorAll('.sfxBtn').forEach((b) => { b.textContent = 'Effets : ' + (meta.sound ? 'oui' : 'non'); });
   };
   sl();
+  const GFX_NAMES = { classic: 'Classique', hd: 'Pixel HD', cel: 'Cel-shading 3D' };
+  const gl = () => document.querySelectorAll('.gfxBtn').forEach((b) => { b.textContent = 'Graphismes : ' + GFX_NAMES[meta.gfx]; });
+  gl();
+  document.querySelectorAll('.gfxBtn').forEach((b) => { b.onclick = async () => {
+    const order = ['classic', 'hd', 'cel'];
+    meta.gfx = order[(order.indexOf(meta.gfx) + 1) % order.length]; saveMeta(); gl();
+    await setGfx(meta.gfx);
+  }; });
   document.querySelectorAll('.musicBtn').forEach((b) => { b.onclick = () => { audioUnlock(); meta.music = !meta.music; saveMeta(); setVolumes(); sl(); }; });
   document.querySelectorAll('.sfxBtn').forEach((b) => { b.onclick = () => { audioUnlock(); meta.sound = !meta.sound; saveMeta(); setVolumes(); sl(); SFX.ui(); }; });
   // petit clic sur tous les boutons de menu
@@ -1828,11 +2004,33 @@ function frame(now) {
   if (!G) { ctx.fillStyle = '#0b0712'; ctx.fillRect(0, 0, VW, VH); return; }
   if (state === 'play') { update(dt); hudFrame(); }
   else if (state === 'dead') { G.time += dt; for (const pt of G.parts) { pt.life -= dt; pt.x += pt.vx * dt; pt.y += pt.vy * dt; } }
-  render();
+  if (GFX === 'cel' && R3D && R3D.enabled) { R3D.render(); renderOverlay3D(); }
+  else render();
   if (state === 'play' && Math.floor(G.time) !== hudCache.sec) { hudCache.sec = Math.floor(G.time); updateHUD(); }
 }
 
+async function setGfx(mode) {
+  if (mode === 'cel' && !(await start3D())) { toast('Le mode 3D n’a pas pu démarrer sur cet appareil', '#ff8a7a', 2.5); mode = 'classic'; meta.gfx = 'classic'; saveMeta(); }
+  if (mode !== 'cel') stop3D();
+  GFX = mode;
+  resize();
+  if (G && mode !== 'cel') prerenderMap();
+}
+// le mode 3D est chargé seulement si on le choisit (fichier r3d.js)
+let R3D = null;
+async function start3D() {
+  try {
+    if (!R3D) { toast('Chargement de la 3D…', '#c9a2ff', 4); const m = await import('./r3d.js'); R3D = await m.create(canvas3d(), { getGame: () => G, getState: () => state }); }
+    R3D.enable(true);
+    document.body.classList.add('cel');
+    return true;
+  } catch (e) { console.error(e); return false; }
+}
+function stop3D() { if (R3D) R3D.enable(false); document.body.classList.remove('cel'); }
+function canvas3d() { let c = document.getElementById('game3d'); if (!c) { c = document.createElement('canvas'); c.id = 'game3d'; document.body.insertBefore(c, canvas.nextSibling); } return c; }
+
 async function boot() {
+  GFX = meta.gfx === 'cel' ? 'classic' : meta.gfx;
   resize();
   try { await loadAssets(); } catch (e) { $('loading').textContent = 'Erreur de chargement. Vérifie ta connexion puis relance.'; return; }
   $('loading').classList.add('hidden');
@@ -1840,6 +2038,7 @@ async function boot() {
   setupScreens();
   refreshIcons();
   showTitle();
+  if (meta.gfx !== 'classic') setGfx(meta.gfx);
   requestAnimationFrame(frame);
   setupUpdates();
 }
@@ -1892,4 +2091,4 @@ async function applyUpdate() {
 boot();
 
 // accès pour les tests
-window.__rw = { get actMain() { return actMain; }, get act2() { return act2; }, get act3() { return act3; }, checkUpdate, get pending() { return pendingUpdate; }, get G() { return G; }, get state() { return state; }, get music() { return music; }, get actx() { return actx; }, SFX, startRun, nextFloor, doAttack, doCharge, doWhirl };
+window.__rw = { get R3D() { return R3D; }, get GFX() { return GFX; }, get actMain() { return actMain; }, get act2() { return act2; }, get act3() { return act3; }, checkUpdate, get pending() { return pendingUpdate; }, get G() { return G; }, get state() { return state; }, get music() { return music; }, get actx() { return actx; }, SFX, startRun, nextFloor, doAttack, doCharge, doWhirl };

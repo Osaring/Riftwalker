@@ -13,6 +13,7 @@
 <link rel="apple-touch-icon" href="assets/icon-180.png">
 <link rel="icon" href="assets/icon-192.png">
 <link rel="stylesheet" href="style.css">
+<script type="importmap">{ "imports": { "three": "./vendor/three.module.min.js" } }</script>
 </head>
 <body>
 <canvas id="game"></canvas>
@@ -53,9 +54,10 @@
     <button id="newBtn">Nouvelle expédition</button>
     <button id="helpBtn" class="ghost">Comment jouer</button>
     <div class="row"><button class="ghost musicBtn">Musique</button><button class="ghost sfxBtn">Effets</button></div>
+    <button class="ghost gfxBtn">Graphismes</button>
   </div>
   <p class="stats" id="titleStats"></p>
-  <p class="credit">Graphismes : 0x72 (Dungeon Tileset II, CC0) · <span id="versionLabel"></span></p>
+  <p class="credit">Graphismes : 0x72 (CC0), LPC (CC-BY-SA/GPL, voir CREDITS-LPC), Kay Lousberg & Quaternius (CC0) · <span id="versionLabel"></span></p>
 </div>
 
 <div id="help" class="screen hidden">
@@ -105,6 +107,7 @@
   <div class="menu">
     <button id="resumeBtn">Reprendre</button>
     <div class="row"><button class="ghost musicBtn">Musique</button><button class="ghost sfxBtn">Effets</button></div>
+    <button class="ghost gfxBtn">Graphismes</button>
     <button id="quitBtn" class="ghost">Abandonner l'expédition</button>
   </div>
 </div>
