@@ -1,0 +1,95 @@
+<!doctype html>
+<html lang="fr">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, maximum-scale=1, user-scalable=no, viewport-fit=cover">
+<meta name="apple-mobile-web-app-capable" content="yes">
+<meta name="mobile-web-app-capable" content="yes">
+<meta name="apple-mobile-web-app-status-bar-style" content="black-translucent">
+<meta name="apple-mobile-web-app-title" content="Riftwalker">
+<meta name="theme-color" content="#0b0712">
+<title>Riftwalker</title>
+<link rel="manifest" href="manifest.json">
+<link rel="apple-touch-icon" href="assets/icon-180.png">
+<link rel="icon" href="assets/icon-192.png">
+<link rel="stylesheet" href="style.css">
+</head>
+<body>
+<canvas id="game"></canvas>
+
+<!-- HUD -->
+<div id="hud" class="hidden">
+  <div id="frame">
+    <div class="bar hp"><div class="fill" id="hpFill"></div><span id="hpText">100 / 100</span></div>
+    <div class="bar rage"><div class="fill" id="rageFill"></div><span id="rageText">0 rage</span></div>
+    <div id="infos">
+      <span id="floorLabel">Étage 1</span>
+      <span class="inv"><i class="ico" data-sprite="coin_anim_f0"></i><b id="goldText">0</b></span>
+      <span class="inv" id="keyInv"><i class="ico" data-sprite="key"></i><b id="keyText">0</b></span>
+    </div>
+  </div>
+  <div id="topRight">
+    <canvas id="minimap"></canvas>
+    <button id="pauseBtn" aria-label="Pause">II</button>
+  </div>
+  <div id="toast"></div>
+  <div id="stickZone"><div id="stickBase"><div id="stickKnob"></div></div></div>
+  <div id="actions">
+    <button class="act" id="btnPotion" data-label="Potion"><canvas></canvas><span class="cd"></span><b class="count" id="potionCount">0</b></button>
+    <button class="act" id="btnWhirl" data-label="Tourbillon"><canvas></canvas><span class="cd"></span><b class="cost">35</b></button>
+    <button class="act" id="btnCharge" data-label="Charge"><canvas></canvas><span class="cd"></span></button>
+    <button class="act big" id="btnAttack" data-label="Frappe"><canvas></canvas><span class="cd"></span></button>
+  </div>
+</div>
+
+<!-- Écrans -->
+<div id="title" class="screen">
+  <div class="rift"></div>
+  <h1>RIFTWALKER</h1>
+  <p class="sub">Arpente les failles. Survis aux profondeurs.</p>
+  <div class="menu">
+    <button id="continueBtn" class="hidden">Continuer</button>
+    <button id="newBtn">Nouvelle expédition</button>
+    <button id="helpBtn" class="ghost">Comment jouer</button>
+  </div>
+  <p class="stats" id="titleStats"></p>
+  <p class="credit">Graphismes : 0x72 (Dungeon Tileset II, CC0)</p>
+</div>
+
+<div id="help" class="screen hidden">
+  <h2>Comment jouer</h2>
+  <ul>
+    <li><b>Déplacement :</b> pose ton pouce n'importe où sur la moitié gauche de l'écran.</li>
+    <li><b>Frappe :</b> attaque à l'épée. Chaque coup réussi remplit ta <span class="r">rage</span>.</li>
+    <li><b>Charge :</b> fonce sur l'ennemi le plus proche et l'étourdit. Donne de la rage.</li>
+    <li><b>Tourbillon :</b> coûte 35 de rage, frappe tout autour de toi.</li>
+    <li>Quand un ennemi <span class="r">clignote en rouge</span>, il prépare un coup : éloigne-toi !</li>
+    <li>Les salles se verrouillent tant que les monstres sont en vie.</li>
+    <li>Trouve la <span class="y">clé</span> pour ouvrir la salle scellée et son trésor.</li>
+    <li>Méfie-toi des coffres… certains mordent.</li>
+    <li>Bats le gardien, puis entre dans la <span class="p">faille</span> pour descendre.</li>
+  </ul>
+  <button id="helpBack">Retour</button>
+</div>
+
+<div id="pause" class="screen hidden">
+  <h2>Pause</h2>
+  <div class="menu">
+    <button id="resumeBtn">Reprendre</button>
+    <button id="soundBtn" class="ghost">Son : activé</button>
+    <button id="quitBtn" class="ghost">Abandonner l'expédition</button>
+  </div>
+</div>
+
+<div id="death" class="screen hidden">
+  <h2 class="red">Tu es tombé</h2>
+  <p id="deathText"></p>
+  <div class="menu"><button id="retryBtn">Nouvelle expédition</button><button id="menuBtn" class="ghost">Menu</button></div>
+</div>
+
+<div id="fade"></div>
+<div id="loading">Chargement…</div>
+
+<script src="game.js"></script>
+</body>
+</html>
