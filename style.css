@@ -111,3 +111,6 @@ h2.red { color: #ff6a5a; }
 
 canvas#game3d { position: fixed; left: 0; top: 0; display: none; }
 body.cel canvas#game { z-index: 1; image-rendering: auto; }
+/* les images du jeu ne doivent jamais capter les doigts : les commandes sont au-dessus */
+canvas#game, canvas#game3d { pointer-events: none; }
+#hud { z-index: 5; }

@@ -1,4 +1,4 @@
 {
-  "version": "1.4.0",
-  "notes": "Nouveaux graphismes : Pixel HD et 3D cel-shading (menu Graphismes)"
+  "version": "1.4.1",
+  "notes": "Correctif : les commandes fonctionnent en mode 3D"
 }
