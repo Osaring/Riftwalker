@@ -1,7 +1,7 @@
 /* RIFTWALKER — roguelike de donjons (V1 : le Guerrier)
    Tout le jeu tient dans ce fichier. Graphismes : 0x72 Dungeon Tileset II (CC0). */
 'use strict';
-const APP_VERSION = '1.2.0';
+const APP_VERSION = '1.3.0';
 
 // ============================================================
 // 1. OUTILS
@@ -41,7 +41,7 @@ const saveMeta = () => store.set('rw_meta', meta);
 // ============================================================
 // 2. GRAPHISMES
 // ============================================================
-let atlas, atlasWhite, atlasRed, SPR;
+let atlas, atlasWhite, atlasRed, atlasIce, SPR;
 async function loadAssets() {
   const [json] = await Promise.all([
     fetch('assets/atlas.json').then((r) => r.json()),
@@ -51,6 +51,7 @@ async function loadAssets() {
   SPR = json;
   atlasWhite = tinted('#ffffff');
   atlasRed = tinted('#ff3a2a');
+  atlasIce = tinted('#bdf0ff');
 }
 function tinted(color) {
   const c = document.createElement('canvas');
@@ -198,6 +199,13 @@ const SFX = {
   ui: () => { tone(660, 0.04, 'square', 0.04); tone(990, 0.05, 'square', 0.03, 0, 0.03); },
   pickup: () => { tone(523, 0.06, 'square', 0.05); tone(784, 0.08, 'square', 0.05, 0, 0.05); },
   floor: () => { [57, 60, 64, 69, 72, 76, 81].forEach((m, i) => tone(midi(m), 0.3, 'triangle', 0.07, 0, i * 0.07)); noise(1, 0.04, 5000, 0.4); },
+  cast: () => { tone(220, 0.6, 'sine', 0.05, 440); noise(0.55, 0.035, 3000, 0, 'bandpass'); },
+  fire: () => { noise(0.25, 0.12, 900, 0, 'bandpass'); tone(300, 0.2, 'sawtooth', 0.04, -180); },
+  boom: () => { noise(0.35, 0.2, 400, 0, 'lowpass'); tone(90, 0.3, 'sine', 0.22, -50); noise(0.15, 0.08, 2500); },
+  nova: () => { [1568, 2093, 2637, 3136].forEach((f, i) => tone(f, 0.35, 'triangle', 0.04, 0, i * 0.03)); noise(0.4, 0.1, 4000); tone(140, 0.25, 'sine', 0.12, -60); },
+  blink: () => { tone(900, 0.18, 'square', 0.04, -700); tone(300, 0.2, 'sine', 0.06, 900, 0.05); noise(0.15, 0.06, 5000); },
+  fizzle: () => { noise(0.18, 0.06, 1500, 0, 'bandpass'); tone(400, 0.15, 'triangle', 0.04, -250); },
+  shatter: () => { [2637, 3520, 2093].forEach((f, i) => tone(f, 0.12, 'square', 0.03, 0, i * 0.04)); noise(0.2, 0.12, 5000); },
   rageFull: () => { tone(220, 0.15, 'sawtooth', 0.05, 220); tone(440, 0.2, 'square', 0.04, 0, 0.1); },
 };
 
@@ -333,19 +341,26 @@ const WEAPONS = [
   ['weapon_saw_sword', 'Lame dentelée', 4], ['weapon_red_gem_sword', 'Épée au rubis', 4], ['weapon_big_hammer', 'Grand marteau', 4],
   ['weapon_golden_sword', 'Épée dorée', 5], ['weapon_lavish_sword', 'Lame somptueuse', 5],
 ];
+const STAVES = [
+  ['weapon_green_magic_staff', 'Bâton noueux', 0], ['weapon_green_magic_staff', "Bâton d'apprenti", 1], ['weapon_green_magic_staff', 'Bâton de saule', 2],
+  ['weapon_green_magic_staff', "Bâton de l'adepte", 3], ['weapon_red_magic_staff', 'Bâton de braise', 3], ['weapon_red_magic_staff', 'Sceptre écarlate', 4],
+  ['weapon_red_magic_staff', "Bâton de l'archimage", 5],
+];
 const SUFFIX = ['du Néant', 'des Profondeurs', 'du Rôdeur', 'de la Tempête', 'du Sanglier', "de l'Ours", 'du Faucon'];
 
-function makeWeapon(floorN, rarity) {
+function makeWeapon(floorN, rarity, cls = 'warrior') {
   let w;
-  if (rarity === 5) w = Math.random() < 0.5 ? ['weapon_anime_sword', 'Lame de la Faille', 6] : pick(WEAPONS.filter((x) => x[2] >= 4));
+  const LIST = cls === 'mage' ? STAVES : WEAPONS;
+  const legend = cls === 'mage' ? ['weapon_red_magic_staff', 'Bâton de la Faille', 6] : ['weapon_anime_sword', 'Lame de la Faille', 6];
+  if (rarity === 5) w = Math.random() < 0.5 ? legend : pick(LIST.filter((x) => x[2] >= 4));
   else {
     const tier = clamp(rarity + randi(-1, 1), 0, 5);
-    const pool = WEAPONS.filter((x) => Math.abs(x[2] - tier) <= 1);
+    const pool = LIST.filter((x) => Math.abs(x[2] - tier) <= 1);
     w = pick(pool);
   }
   const dmg = Math.round((9 + floorN * 2.2 + w[2] * 1.5) * RARITY[rarity].mult * rand(0.92, 1.08));
   let name = w[1];
-  if (rarity >= 3 && name !== 'Lame de la Faille') name += ' ' + pick(SUFFIX);
+  if (rarity >= 3 && w[2] !== 6) name += ' ' + pick(SUFFIX);
   return { sprite: w[0], name, rarity, dmg };
 }
 function rollRarity(weights) {
@@ -519,25 +534,34 @@ let G = null;          // partie en cours
 let state = 'loading'; // loading | title | play | pause | dead | trans
 const input = { mx: 0, my: 0, keys: {}, attackHeld: false };
 
-function newPlayer() {
+const CLASSES = {
+  warrior: { name: 'Guerrier', sprite: 'knight_m', hp: 100, weapon: { sprite: 'weapon_regular_sword', name: 'Épée de recrue', rarity: 1, dmg: 10 } },
+  mage: { name: 'Mage', sprite: 'wizzard_m', hp: 75, weapon: { sprite: 'weapon_green_magic_staff', name: "Bâton d'apprenti", rarity: 1, dmg: 10 } },
+};
+// Sorts du mage : coût en mana, temps d'incantation
+const MAGE = { fireCost: 8, castTime: 0.65, blinkCost: 15, novaCost: 25, regen: 9, regenIdle: 22 };
+
+function newPlayer(cls = 'warrior') {
+  const C = CLASSES[cls];
+  const mage = cls === 'mage';
   return {
-    x: 0, y: 0, r: 4, dir: 1, fx: 1, fy: 0, maxHp: 100, hp: 100, rage: 0,
-    weapon: { sprite: 'weapon_regular_sword', name: 'Épée de recrue', rarity: 1, dmg: 10 },
+    cls, x: 0, y: 0, r: 4, dir: 1, fx: 1, fy: 0, maxHp: C.hp, hp: C.hp, rage: 0, mana: 100, maxMana: 100, casting: 0,
+    weapon: { ...C.weapon },
     potions: 1, gold: 0, keys: 0, kills: 0,
     cd: { attack: 0, charge: 0, whirl: 0, potion: 0 },
-    cdMax: { attack: 0.36, charge: 7, whirl: 1.2, potion: 1 },
+    cdMax: mage ? { attack: 0.12, charge: 7, whirl: 9, potion: 1 } : { attack: 0.36, charge: 7, whirl: 1.2, potion: 1 },
     swing: 0, whirl: 0, charging: 0, chargeTarget: null, inv: 0, hurtT: 0, anim: 0, moving: false, trail: [],
   };
 }
 
-function startRun(fromSave) {
-  const p = newPlayer();
+function startRun(fromSave, cls) {
+  const p = newPlayer((fromSave && fromSave.cls) || cls || 'warrior');
   let floorN = 1, seed = (Math.random() * 1e9) | 0;
   if (fromSave) {
     Object.assign(p, { maxHp: fromSave.maxHp, hp: fromSave.hp, weapon: fromSave.weapon, potions: fromSave.potions, gold: fromSave.gold, kills: fromSave.kills || 0 });
     floorN = fromSave.floor; seed = fromSave.seed;
   } else { meta.runs++; saveMeta(); }
-  G = { p, floorN, time: 0, shake: 0, freeze: 0, fx: [], parts: [], texts: [], projs: [], pickups: [], enemies: [], chests: [], tele: [] };
+  G = { p, floorN, time: 0, shake: 0, freeze: 0, fx: [], parts: [], texts: [], projs: [], fire: [], pickups: [], enemies: [], chests: [], tele: [] };
   enterFloor(floorN, seed);
   showScreen(null);
   $('hud').classList.remove('hidden');
@@ -548,7 +572,7 @@ function startRun(fromSave) {
 function enterFloor(floorN, seed) {
   const D = generateFloor(floorN, seed);
   G.D = D; G.floorN = floorN;
-  G.enemies = []; G.chests = []; G.pickups = []; G.projs = []; G.fx = []; G.parts = []; G.texts = []; G.tele = [];
+  G.enemies = []; G.chests = []; G.pickups = []; G.projs = []; G.fire = []; G.fx = []; G.parts = []; G.texts = []; G.tele = [];
   G.barrier = new Uint8Array(MW * MH);
   G.explored = new Uint8Array(MW * MH);
   G.portal = null; G.room = null;
@@ -631,6 +655,91 @@ function face(p, tx, ty) {
   if (Math.abs(p.fx) > 0.15) p.dir = p.fx > 0 ? 1 : -1;
 }
 
+// Les 3 boutons font des choses différentes selon la classe
+const actMain = () => (G.p.cls === 'mage' ? startCast() : doAttack());
+const act2 = () => (G.p.cls === 'mage' ? doBlink() : doCharge());
+const act3 = () => (G.p.cls === 'mage' ? doNova() : doWhirl());
+
+// ---------- MAGE ----------
+let hintT = 0;
+function startCast() {
+  const p = G.p;
+  if (p.casting > 0 || p.cd.attack > 0) return;
+  if (p.mana < MAGE.fireCost) { if (G.time - hintT > 1.5) { hintT = G.time; toast('Pas assez de mana', '#7ab8ff', 0.9); } return; }
+  if (p.moving) { if (G.time - hintT > 3) { hintT = G.time; toast('Arrête-toi pour incanter', '#ffb07a', 1.1); } return; }
+  p.casting = MAGE.castTime; p.castT = MAGE.castTime;
+  const t = nearestEnemy(170);
+  if (t) face(p, t.x, t.y);
+  SFX.cast();
+}
+function releaseFireball() {
+  const p = G.p;
+  const t = nearestEnemy(180);
+  if (t) face(p, t.x, t.y - 4);
+  p.mana -= MAGE.fireCost;
+  p.cd.attack = p.cdMax.attack;
+  const sp = 200;
+  G.fire.push({ x: p.x + p.fx * 8, y: p.y - 9 + p.fy * 6, vx: p.fx * sp, vy: p.fy * sp, life: 1.4, dmg: p.weapon.dmg });
+  SFX.fire();
+}
+function explode(f, direct) {
+  SFX.boom();
+  G.shake = Math.max(G.shake, 2.5);
+  G.fx.push({ type: 'ring', x: f.x, y: f.y + 4, t: 0.25, T: 0.25, r0: 4, r1: 20, c: '#ffb84a' });
+  G.fx.push({ type: 'flash', x: f.x, y: f.y, t: 0.15, T: 0.15 });
+  for (let i = 0; i < 18; i++) { const a = rand(0, 6.28); G.parts.push({ x: f.x, y: f.y, vx: Math.cos(a) * rand(20, 90), vy: Math.sin(a) * rand(20, 90), life: rand(0.2, 0.5), c: pick(['#ffe07a', '#ff9a3a', '#ff5a2a', '#ffffff']), s: rand(1, 2) }); }
+  for (const e of G.enemies) {
+    if (e.dead || !e.active) continue;
+    const d = Math.hypot(e.x - f.x, e.y - 6 - f.y);
+    if (e === direct || d < 18 + e.r) {
+      const shatter = e.frozen > 0;
+      damageEnemy(e, f.dmg, e === direct ? 1.6 : 0.8, { kb: 70, forceCrit: shatter, label: shatter ? 'Brisure !' : null });
+      if (shatter) SFX.shatter();
+      if (!e.dead) { e.burn = 3; e.burnDmg = Math.max(1, Math.round(f.dmg * 0.15)); e.burnTick = e.burnTick > 0 ? e.burnTick : 0.5; }
+    }
+  }
+}
+function doBlink() {
+  const p = G.p;
+  if (p.cd.charge > 0) return;
+  if (p.mana < MAGE.blinkCost) { toast('Pas assez de mana', '#7ab8ff', 0.9); return; }
+  let dx, dy;
+  const ml = Math.hypot(input.mx, input.my);
+  if (ml > 0.2) { dx = input.mx / ml; dy = input.my / ml; }
+  else {
+    const t = nearestEnemy(90);
+    if (t) { const a = Math.atan2(p.y - t.y, p.x - t.x); dx = Math.cos(a); dy = Math.sin(a); } else { dx = p.fx; dy = p.fy; }
+  }
+  const ox = p.x, oy = p.y;
+  let moved = 0;
+  for (let d = 4; d <= 72; d += 4) { if (blocked(ox + dx * d, oy + dy * d, p.r)) break; moved = d; }
+  if (moved < 10) { toast('Pas de place pour se téléporter', '#cfc3e0', 0.9); return; }
+  p.x = ox + dx * moved; p.y = oy + dy * moved;
+  p.casting = 0; p.mana -= MAGE.blinkCost; p.cd.charge = p.cdMax.charge; p.inv = Math.max(p.inv, 0.3);
+  if (Math.abs(dx) > 0.2) p.dir = dx > 0 ? 1 : -1;
+  G.fx.push({ type: 'blink', x0: ox, y0: oy - 8, x1: p.x, y1: p.y - 8, t: 0.3, T: 0.3 });
+  for (const [x, y] of [[ox, oy], [p.x, p.y]]) for (let i = 0; i < 14; i++) G.parts.push({ x: x + rand(-5, 5), y: y - rand(0, 20), vx: rand(-25, 25), vy: rand(-40, 0), life: rand(0.3, 0.6), c: pick(['#c9a2ff', '#8a5aff', '#ffffff']), s: 1 });
+  SFX.blink();
+}
+function doNova() {
+  const p = G.p;
+  if (p.cd.whirl > 0) return;
+  if (p.mana < MAGE.novaCost) { toast('Pas assez de mana', '#7ab8ff', 0.9); return; }
+  p.mana -= MAGE.novaCost; p.cd.whirl = p.cdMax.whirl; p.casting = 0;
+  G.fx.push({ type: 'ring', x: p.x, y: p.y, t: 0.4, T: 0.4, r0: 6, r1: 48, c: '#bdf0ff', w: 3 });
+  G.fx.push({ type: 'ring', x: p.x, y: p.y, t: 0.5, T: 0.5, r0: 2, r1: 36, c: '#ffffff' });
+  for (let i = 0; i < 30; i++) { const a = rand(0, 6.28); G.parts.push({ x: p.x, y: p.y - 4, vx: Math.cos(a) * rand(40, 120), vy: Math.sin(a) * rand(30, 80), life: rand(0.3, 0.6), c: pick(['#bdf0ff', '#ffffff', '#6ac8ff']), s: rand(1, 2) }); }
+  SFX.nova();
+  let n = 0;
+  for (const e of G.enemies) {
+    if (e.dead || !e.active || dist(p, e) > 48 + e.r) continue;
+    e.frozen = e.d.elite ? 1.3 : 2.8; e.state = 'chase'; e.t = 0; e.kvx = e.kvy = 0; n++;
+    damageEnemy(e, p.weapon.dmg, 0.35, { kb: 0 });
+  }
+  if (n) floatText(p.x, p.y - 30, 'Gelés !', '#bdf0ff', 8);
+}
+
+// ---------- GUERRIER ----------
 function doAttack() {
   const p = G.p;
   if (p.cd.attack > 0 || p.charging > 0 || p.whirl > 0) return;
@@ -683,18 +792,19 @@ function doPotion() {
   SFX.potion();
   updateHUD();
 }
-function gainRage(n) { G.p.rage = Math.min(100, G.p.rage + n); }
+function gainRage(n) { if (G.p.cls === 'warrior') G.p.rage = Math.min(100, G.p.rage + n); }
 
 function damageEnemy(e, base, mult, opt = {}) {
   if (e.dead) return;
-  const crit = Math.random() < 0.12;
+  const crit = opt.forceCrit || Math.random() < 0.12;
   const dmg = Math.max(1, Math.round(base * mult * rand(0.9, 1.1) * (crit ? 2 : 1)));
   e.hp -= dmg; e.flash = 0.12;
   const a = Math.atan2(e.y - G.p.y, e.x - G.p.x);
-  const kb = (opt.kb || 90) * (e.d.elite ? 0.25 : 1);
+  const kb = (opt.kb ?? 90) * (e.d.elite ? 0.25 : 1) * (e.frozen > 0 ? 0 : 1);
   e.kvx = Math.cos(a) * kb; e.kvy = Math.sin(a) * kb;
   if (e.state === 'windup' && !e.d.elite && e.d.ranged) e.state = 'chase';
   floatText(e.x + rand(-4, 4), e.y - sprH(e) - 2, String(dmg), crit ? '#ffe14a' : '#ffffff', crit ? 11 : 8, crit);
+  if (opt.label) floatText(e.x, e.y - sprH(e) - 14, opt.label, '#bdf0ff', 8);
   for (let i = 0; i < (crit ? 10 : 5); i++) G.parts.push({ x: e.x, y: e.y - 6, vx: Math.cos(a) * rand(20, 70) + rand(-20, 20), vy: Math.sin(a) * rand(20, 70) + rand(-30, 10), life: rand(0.15, 0.35), c: pick(['#ffffff', '#ffd27a', '#ff9a4a']), s: 1 });
   if (crit) { SFX.crit(); G.freeze = 0.06; G.shake = Math.max(G.shake, 3); } else SFX.hit();
   if (e.hp <= 0) killEnemy(e);
@@ -781,7 +891,7 @@ function openChest(c) {
   if (c.big || Math.random() < 0.35) G.pickups.push({ type: 'potion', x: c.x, y: c.y, vx: rand(-40, 40), vy: rand(20, 60), t: 0 });
   if (c.big || Math.random() < 0.55) {
     const r = rollRarity(c.big ? [0, 0, 0, 55, 35, 10] : [18, 38, 28, 12, 3.5, 0.5]);
-    G.pickups.push({ type: 'weapon', w: makeWeapon(G.floorN, r), x: c.x, y: c.y, vx: rand(-20, 20), vy: rand(30, 60), t: 0 });
+    G.pickups.push({ type: 'weapon', w: makeWeapon(G.floorN, r, G.p.cls), x: c.x, y: c.y, vx: rand(-20, 20), vy: rand(30, 60), t: 0 });
   }
   for (let i = 0; i < 18; i++) G.parts.push({ x: c.x, y: c.y - 6, vx: rand(-40, 40), vy: rand(-70, -10), life: rand(0.4, 0.9), c: pick(['#ffe14a', '#fff6c0', '#ffb84a']), s: 1 });
 }
@@ -830,7 +940,7 @@ function nextFloor() {
   setTimeout(() => {
     const p = G.p;
     p.hp = Math.min(p.maxHp, p.hp + Math.round(p.maxHp * 0.25));
-    p.rage = 0; p.charging = 0; p.whirl = 0;
+    p.rage = 0; p.charging = 0; p.whirl = 0; p.casting = 0; p.mana = p.maxMana;
     enterFloor(G.floorN + 1, (Math.random() * 1e9) | 0);
     updateHUD(true);
     $('fade').classList.remove('on');
@@ -842,7 +952,7 @@ function nextFloor() {
 
 function saveRun() {
   const p = G.p;
-  store.set('rw_run', { floor: G.floorN, seed: G.D.seed, hp: p.hp, maxHp: p.maxHp, weapon: p.weapon, potions: p.potions, gold: p.gold, kills: p.kills });
+  store.set('rw_run', { cls: p.cls, floor: G.floorN, seed: G.D.seed, hp: p.hp, maxHp: p.maxHp, weapon: p.weapon, potions: p.potions, gold: p.gold, kills: p.kills });
 }
 function playerDeath() {
   state = 'dead';
@@ -866,7 +976,7 @@ function update(dt) {
 
   for (const k in p.cd) p.cd[k] = Math.max(0, p.cd[k] - dt);
   p.inv = Math.max(0, p.inv - dt); p.hurtT = Math.max(0, p.hurtT - dt); p.swing = Math.max(0, p.swing - dt);
-  if (input.attackHeld) doAttack();
+  if (input.attackHeld) actMain();
 
   // --- déplacement ---
   let mx = input.mx, my = input.my;
@@ -878,6 +988,19 @@ function update(dt) {
   const ml = Math.hypot(mx, my);
   if (ml > 1) { mx /= ml; my /= ml; }
   p.moving = ml > 0.1;
+  if (p.cls === 'mage') {
+    const inFight = G.room && G.room.locked;
+    p.mana = Math.min(p.maxMana, p.mana + dt * (inFight ? MAGE.regen : MAGE.regenIdle));
+    if (p.casting > 0) {
+      if (p.moving) { p.casting = 0; p.cd.attack = 0.2; floatText(p.x, p.y - 30, 'Interrompu', '#a89cb8', 7); SFX.fizzle(); }
+      else {
+        p.casting -= dt;
+        const tx = p.x + p.fx * 6, ty = p.y - 18;
+        if (Math.random() < dt * 40) { const a = rand(0, 6.28); G.parts.push({ x: tx + Math.cos(a) * 9, y: ty + Math.sin(a) * 9, vx: -Math.cos(a) * 30, vy: -Math.sin(a) * 30, life: 0.25, c: pick(['#ffe07a', '#ff9a3a']), s: 1 }); }
+        if (p.casting <= 0) { p.casting = 0; releaseFireball(); }
+      }
+    }
+  }
   if (p.charging > 0) {
     p.charging -= dt;
     const t = p.chargeTarget;
@@ -919,7 +1042,7 @@ function update(dt) {
 
   // battement de cœur quand la vie est basse
   if (p.hp / p.maxHp < 0.3) { G.heartT = (G.heartT || 0) - dt; if (G.heartT <= 0) { G.heartT = 1.05; SFX.heart(); } }
-  if (p.rage >= 35 && (G.lastRage || 0) < 35) SFX.rageFull();
+  if (p.cls === 'warrior' && p.rage >= 35 && (G.lastRage || 0) < 35) SFX.rageFull();
   G.lastRage = p.rage;
   // rage qui retombe hors combat
   if (!G.room || !G.room.locked) p.rage = Math.max(0, p.rage - dt * 4);
@@ -949,6 +1072,20 @@ function update(dt) {
     e.moving = false;
     if (e.kvx || e.kvy) { move(e, e.kvx * dt, e.kvy * dt); e.kvx *= Math.pow(0.001, dt); e.kvy *= Math.pow(0.001, dt); if (Math.abs(e.kvx) + Math.abs(e.kvy) < 3) e.kvx = e.kvy = 0; }
     if (!e.active) continue;
+    if (e.burn > 0) {
+      e.burn -= dt; e.burnTick -= dt;
+      if (Math.random() < dt * 14) G.parts.push({ x: e.x + rand(-4, 4), y: e.y - rand(2, 14), vx: rand(-4, 4), vy: rand(-30, -12), life: 0.35, c: pick(['#ff9a3a', '#ffd04a', '#ff5a2a']), s: 1 });
+      if (e.burnTick <= 0) {
+        e.burnTick = 0.5; e.hp -= e.burnDmg;
+        floatText(e.x + rand(-5, 5), e.y - sprH(e), String(e.burnDmg), '#ff9a3a', 7);
+        if (e.hp <= 0) { killEnemy(e); continue; }
+      }
+    }
+    if (e.frozen > 0) {
+      e.frozen -= dt; e.kvx = e.kvy = 0;
+      if (e.frozen <= 0) for (let i = 0; i < 8; i++) G.parts.push({ x: e.x + rand(-5, 5), y: e.y - rand(0, 14), vx: rand(-20, 20), vy: rand(-20, 10), life: 0.4, c: '#bdf0ff', s: 1 });
+      continue;
+    }
     if (e.stun > 0) { e.stun -= dt; continue; }
     const d = dist(e, p);
     const ax = (p.x - e.x) / (d || 1), ay = (p.y - e.y) / (d || 1);
@@ -1006,6 +1143,17 @@ function update(dt) {
     }
   }
   G.tele = G.tele.filter((t) => { t.t -= dt; if (t.owner) { t.x = t.owner.x; t.y = t.owner.y; } return t.t > 0 && !(t.owner && (t.owner.dead || t.owner.state !== 'slam')); });
+
+  // --- boules de feu du mage ---
+  for (const f of G.fire) {
+    f.life -= dt;
+    f.x += f.vx * dt; f.y += f.vy * dt;
+    if (Math.random() < dt * 60) G.parts.push({ x: f.x + rand(-1, 1), y: f.y + rand(-1, 1), vx: -f.vx * 0.1 + rand(-10, 10), vy: -f.vy * 0.1 + rand(-10, 10), life: rand(0.15, 0.3), c: pick(['#ffe07a', '#ff9a3a', '#ff5a2a']), s: 1 });
+    let hitE = null;
+    for (const e of G.enemies) { if (!e.dead && e.active && Math.hypot(e.x - f.x, e.y - 7 - f.y) < e.r + 6) { hitE = e; break; } }
+    if (hitE || solidAt(f.x, f.y + 6) || f.life <= 0) { explode(f, hitE); f.life = 0; }
+  }
+  G.fire = G.fire.filter((f) => f.life > 0);
 
   // --- projectiles ---
   for (const pr of G.projs) {
@@ -1169,6 +1317,13 @@ function render() {
     if (Math.abs(to.x - G.cam.x) > VW || Math.abs(to.y - G.cam.y) > VH) continue;
     spr(ctx, 'torch_f' + (Math.floor(t * 9 + to.x) % 3), to.x - 3, to.y - 4);
   }
+  // boules de feu
+  for (const f of G.fire) {
+    const x = Math.round(f.x), y = Math.round(f.y);
+    ctx.fillStyle = '#c0300a'; ctx.fillRect(x - 3, y - 2, 6, 4); ctx.fillRect(x - 2, y - 3, 4, 6);
+    ctx.fillStyle = '#ff9a3a'; ctx.fillRect(x - 2, y - 2, 4, 4);
+    ctx.fillStyle = '#fff2b0'; ctx.fillRect(x - 1, y - 1, 2, 2);
+  }
   // projectiles
   for (const pr of G.projs) {
     ctx.fillStyle = '#ff7a2a'; ctx.fillRect(Math.round(pr.x) - 2, Math.round(pr.y) - 2, 4, 4);
@@ -1183,6 +1338,16 @@ function render() {
       ctx.beginPath(); ctx.arc(f.x, f.y, f.r, a0, a1); ctx.stroke();
       ctx.globalAlpha = k * 0.5; ctx.lineWidth = 1; ctx.beginPath(); ctx.arc(f.x, f.y, f.r - 3, a0 + 0.3, a1); ctx.stroke();
       ctx.restore();
+    } else if (f.type === 'ring') {
+      const r = f.r0 + (f.r1 - f.r0) * (1 - k);
+      ctx.save(); ctx.globalAlpha = k; ctx.strokeStyle = f.c; ctx.lineWidth = f.w || 2;
+      ctx.beginPath(); ctx.ellipse(f.x, f.y, r, r * 0.7, 0, 0, 6.29); ctx.stroke(); ctx.restore();
+    } else if (f.type === 'blink') {
+      ctx.save(); ctx.globalAlpha = k * 0.8; ctx.strokeStyle = '#c9a2ff'; ctx.lineWidth = 2;
+      ctx.beginPath(); ctx.moveTo(f.x0, f.y0); ctx.lineTo(f.x1, f.y1); ctx.stroke(); ctx.restore();
+    } else if (f.type === 'flash') {
+      ctx.save(); ctx.globalAlpha = k; ctx.fillStyle = '#fff6c0';
+      ctx.beginPath(); ctx.arc(f.x, f.y, 7 * k + 3, 0, 6.29); ctx.fill(); ctx.restore();
     } else if (f.type === 'claw') {
       ctx.save(); ctx.globalAlpha = k; ctx.strokeStyle = '#ff5a4a'; ctx.lineWidth = 1;
       for (let i = -1; i <= 1; i++) { ctx.beginPath(); ctx.moveTo(f.x + Math.cos(f.ang + 1.57) * i * 3 - Math.cos(f.ang) * 5, f.y + Math.sin(f.ang + 1.57) * i * 3 - Math.sin(f.ang) * 5); ctx.lineTo(f.x + Math.cos(f.ang + 1.57) * i * 3 + Math.cos(f.ang) * 5, f.y + Math.sin(f.ang + 1.57) * i * 3 + Math.sin(f.ang) * 5); ctx.stroke(); }
@@ -1212,6 +1377,14 @@ function render() {
     ctx.fillStyle = tx.color; ctx.fillText(tx.text, Math.round(tx.x), Math.round(tx.y));
   }
   ctx.globalAlpha = 1;
+  // barre d'incantation du mage
+  if (p.cls === 'mage' && p.casting > 0) {
+    const k = 1 - p.casting / p.castT, bw = 22, bx = Math.round(p.x - bw / 2), by = Math.round(p.y - 34);
+    ctx.fillStyle = '#000'; ctx.fillRect(bx - 1, by - 1, bw + 2, 5);
+    ctx.fillStyle = '#3a2008'; ctx.fillRect(bx, by, bw, 3);
+    ctx.fillStyle = '#ffb02a'; ctx.fillRect(bx, by, Math.round(bw * k), 3);
+    ctx.fillStyle = '#fff2b0'; ctx.fillRect(bx, by, Math.round(bw * k), 1);
+  }
   // barres de vie des ennemis blessés
   for (const e of G.enemies) {
     if (e.dead || e.hp >= e.maxHp || !e.active) continue;
@@ -1245,7 +1418,8 @@ function drawPlayer() {
   }
   shadow(p.x, p.y, 6);
   const fr = Math.floor(p.anim) % 4;
-  const name = p.hurtT > 0 ? 'knight_m_hit_anim_f0' : (p.moving || p.charging > 0 ? 'knight_m_run_anim_f' : 'knight_m_idle_anim_f') + fr;
+  const base = CLASSES[p.cls].sprite;
+  const name = p.hurtT > 0 ? base + '_hit_anim_f0' : (p.moving || p.charging > 0 ? base + '_run_anim_f' : base + '_idle_anim_f') + fr;
   const [, , sw, sh] = sprSize(name);
   const bx = p.x - sw / 2, by = p.y - sh + 3;
   // arme derrière si on regarde vers le haut
@@ -1260,7 +1434,8 @@ function drawWeapon() {
   const [, , ww, wh] = sprSize(w);
   let ang;
   const base = Math.atan2(p.fy, p.fx);
-  if (p.whirl > 0) ang = G.time * 28;
+  if (p.cls === 'mage') ang = p.casting > 0 ? (p.dir > 0 ? -1.1 : -Math.PI + 1.1) : (p.dir > 0 ? -1.4 : -Math.PI + 1.4);
+  else if (p.whirl > 0) ang = G.time * 28;
   else if (p.swing > 0) { const k = 1 - p.swing / 0.2; ang = base - 1.5 + 2.8 * (1 - Math.pow(1 - k, 3)); }
   else if (p.charging > 0) ang = base;
   else ang = p.dir > 0 ? -0.95 : -Math.PI + 0.95;
@@ -1270,6 +1445,12 @@ function drawWeapon() {
   ctx.rotate(ang + Math.PI / 2);
   const r = SPR[w];
   ctx.drawImage(atlas, r[0], r[1], ww, wh, -ww / 2, -wh + 2, ww, wh);
+  if (p.cls === 'mage' && p.casting > 0) {
+    const k = 1 - p.casting / p.castT;
+    const s = 2 + Math.round(k * 3);
+    ctx.fillStyle = '#ff7a2a'; ctx.fillRect(-s / 2 - 1, -wh - s / 2 - 1, s + 2, s + 2);
+    ctx.fillStyle = '#ffe07a'; ctx.fillRect(-s / 2, -wh - s / 2, s, s);
+  }
   ctx.restore();
 }
 function drawEnemy(e) {
@@ -1284,7 +1465,14 @@ function drawEnemy(e) {
   const charging = e.state === 'windup' || e.state === 'slam';
   const ox = charging ? rand(-0.7, 0.7) : 0;
   spr(ctx, name, e.x - sw / 2 + ox, e.y - sh + 3, { flip: e.dir < 0, img });
-  if (charging && e.flash <= 0) {
+  if (e.frozen > 0) {
+    ctx.save(); ctx.globalAlpha = 0.65;
+    spr(ctx, name, e.x - sw / 2, e.y - sh + 3, { flip: e.dir < 0, img: atlasIce });
+    ctx.restore();
+    ctx.fillStyle = '#e8fbff';
+    for (let i = 0; i < 3; i++) ctx.fillRect(Math.round(e.x - sw / 2 + 3 + i * (sw - 6) / 2), Math.round(e.y - sh + 6 + (i % 2) * 8), 1, 2);
+  }
+  if (charging && e.flash <= 0 && !(e.frozen > 0)) {
     // l'ennemi rougeoie : il prépare un coup
     ctx.save();
     ctx.globalAlpha = 0.35 + 0.3 * Math.sin(G.time * 30);
@@ -1327,7 +1515,7 @@ function drawPickup(k) {
   }
 }
 
-const LIGHT_COLORS = { player: [255, 190, 120], torch: [255, 140, 50], fire: [255, 120, 40], portal: [170, 110, 255], gold: [255, 210, 90], rare: [120, 160, 255] };
+const LIGHT_COLORS = { ice: [150, 220, 255], player: [255, 190, 120], torch: [255, 140, 50], fire: [255, 120, 40], portal: [170, 110, 255], gold: [255, 210, 90], rare: [120, 160, 255] };
 function renderLights(cx, cy) {
   const p = G.p, t = G.time;
   const lights = [];
@@ -1338,6 +1526,12 @@ function renderLights(cx, cy) {
     lights.push([to.x, to.y + 4, 52 + Math.sin(t * 11 + to.x) * 3 + Math.sin(t * 5 + to.y) * 2, 'torch', 0.22]);
   }
   for (const pr of G.projs) lights.push([pr.x, pr.y, 26, 'fire', 0.35]);
+  for (const f of G.fire) lights.push([f.x, f.y, 34, 'fire', 0.45]);
+  for (const f of G.fx) {
+    if (f.type === 'flash') lights.push([f.x, f.y, 60 * (f.t / f.T) + 10, 'fire', 0.5]);
+    if (f.type === 'ring' && f.c === '#bdf0ff') lights.push([f.x, f.y, 60, 'ice', 0.35 * (f.t / f.T)]);
+  }
+  if (p.cls === 'mage' && p.casting > 0) lights.push([p.x + p.fx * 6, p.y - 22, 20 + 20 * (1 - p.casting / p.castT), 'fire', 0.4]);
   if (G.portal) lights.push([G.portal.x, G.portal.y - 10, 64 * Math.min(1, G.portal.t), 'portal', 0.3]);
   for (const k of G.pickups) if (k.type === 'key' || (k.type === 'weapon' && k.w.rarity >= 3)) lights.push([k.x, k.y - 6, 26, k.type === 'key' ? 'gold' : 'rare', 0.3]);
   for (const c of G.chests) if (c.big && !c.open) lights.push([c.x, c.y - 6, 30, 'gold', 0.25]);
@@ -1384,20 +1578,35 @@ function updateHUD(force) {
   set('keys', p.keys, (v) => { $('keyText').textContent = v; $('keyInv').style.opacity = v ? 1 : 0.35; });
   set('floor', G.floorN, (v) => { $('floorLabel').textContent = 'Étage ' + v; });
   set('pot', p.potions, (v) => { $('potionCount').textContent = v; });
+  set('cls', p.cls, (v) => {
+    const mage = v === 'mage';
+    $('resBar').classList.toggle('mana', mage);
+    $('costCharge').textContent = mage ? MAGE.blinkCost : '';
+    $('costWhirl').textContent = mage ? MAGE.novaCost : 35;
+    $('costAttack').textContent = mage ? MAGE.fireCost : '';
+    refreshIcons();
+  });
 }
 function hudFrame() {
   const p = G.p;
-  const rg = Math.floor(p.rage);
-  if (hudCache.rage !== rg) { hudCache.rage = rg; $('rageFill').style.transform = `scaleX(${rg / 100})`; $('rageText').textContent = rg + ' rage'; }
+  const mage = p.cls === 'mage';
+  const rg = Math.floor(mage ? p.mana : p.rage);
+  if (hudCache.rage !== rg) { hudCache.rage = rg; $('rageFill').style.transform = `scaleX(${rg / 100})`; $('rageText').textContent = rg + (mage ? ' mana' : ' rage'); }
   const btn = (id, cd, max, off) => {
     const el = $(id);
     const pct = max ? Math.round(cd / max * 100) : 0;
     if (el._p !== pct) { el._p = pct; el.querySelector('.cd').style.setProperty('--p', pct + '%'); if (pct === 0 && max > 1) { el.classList.remove('ready'); void el.offsetWidth; el.classList.add('ready'); } }
     if (el._off !== off) { el._off = off; el.classList.toggle('off', off); }
   };
-  btn('btnAttack', p.cd.attack, p.cdMax.attack, false);
-  btn('btnCharge', p.cd.charge, p.cdMax.charge, false);
-  btn('btnWhirl', p.cd.whirl, p.cdMax.whirl, p.rage < 35);
+  if (mage) {
+    btn('btnAttack', p.casting > 0 ? p.casting : p.cd.attack, p.casting > 0 ? p.castT : p.cdMax.attack, p.mana < MAGE.fireCost);
+    btn('btnCharge', p.cd.charge, p.cdMax.charge, p.mana < MAGE.blinkCost);
+    btn('btnWhirl', p.cd.whirl, p.cdMax.whirl, p.mana < MAGE.novaCost);
+  } else {
+    btn('btnAttack', p.cd.attack, p.cdMax.attack, false);
+    btn('btnCharge', p.cd.charge, p.cdMax.charge, false);
+    btn('btnWhirl', p.cd.whirl, p.cdMax.whirl, p.rage < 35);
+  }
   btn('btnPotion', p.cd.potion, p.cdMax.potion, p.potions <= 0);
   if (Math.floor(G.time * 6) !== hudCache.mmT) { hudCache.mmT = Math.floor(G.time * 6); drawMinimap(); }
 }
@@ -1437,6 +1646,7 @@ function drawIconTo(cv, fn) {
 }
 function refreshIcons() {
   const w = G ? G.p.weapon.sprite : 'weapon_regular_sword';
+  if (G && G.p.cls === 'mage') { mageIcons(); return refreshInv(); }
   drawIconTo($('btnAttack').querySelector('canvas'), (c) => { const [, , ww, wh] = sprSize(w); c.save(); c.translate(16, 16); c.rotate(0.75); const r = SPR[w]; const k = wh > 24 ? 0.8 : 1; c.drawImage(atlas, r[0], r[1], ww, wh, -ww * k / 2, -wh * k / 2, ww * k, wh * k); c.restore(); });
   drawIconTo($('btnCharge').querySelector('canvas'), (c) => {
     c.globalAlpha = 0.35; spr(c, 'knight_m_run_anim_f1', 1, 3, { img: atlasWhite }); c.globalAlpha = 0.6; spr(c, 'knight_m_run_anim_f1', 5, 3, { img: atlasWhite }); c.globalAlpha = 1; spr(c, 'knight_m_run_anim_f1', 10, 3);
@@ -1446,6 +1656,28 @@ function refreshIcons() {
     c.fillStyle = '#ffffff'; c.beginPath(); c.moveTo(26, 21); c.lineTo(29, 13); c.lineTo(22, 15); c.fill();
     spr(c, 'knight_m_idle_anim_f0', 8, 2);
   });
+  refreshInv();
+}
+function mageIcons() {
+  drawIconTo($('btnAttack').querySelector('canvas'), (c) => {
+    c.fillStyle = '#ff7a2a'; for (let i = 0; i < 4; i++) c.fillRect(4 + i * 3, 21 - i * 3, 5, 5);
+    c.fillStyle = '#c0300a'; c.fillRect(15, 7, 12, 12); c.fillRect(13, 9, 16, 8);
+    c.fillStyle = '#ff9a3a'; c.fillRect(16, 9, 10, 8);
+    c.fillStyle = '#fff2b0'; c.fillRect(19, 11, 4, 4);
+  });
+  drawIconTo($('btnCharge').querySelector('canvas'), (c) => {
+    c.globalAlpha = 0.4; spr(c, 'wizzard_m_idle_anim_f0', 1, 3, { img: atlasWhite });
+    c.globalAlpha = 1; c.fillStyle = '#c9a2ff'; for (let i = 0; i < 6; i++) c.fillRect(8 + i * 3, 16 + (i % 2) * 2, 2, 2);
+    spr(c, 'wizzard_m_idle_anim_f0', 14, 3);
+  });
+  drawIconTo($('btnWhirl').querySelector('canvas'), (c) => {
+    c.strokeStyle = '#bdf0ff'; c.lineWidth = 2;
+    for (let i = 0; i < 3; i++) { const a = i * Math.PI / 3; c.beginPath(); c.moveTo(16 - Math.cos(a) * 11, 16 - Math.sin(a) * 11); c.lineTo(16 + Math.cos(a) * 11, 16 + Math.sin(a) * 11); c.stroke(); }
+    c.fillStyle = '#ffffff'; c.fillRect(14, 14, 4, 4);
+  });
+  drawIconTo($('btnPotion').querySelector('canvas'), (c) => spr(c, 'flask_big_red', 8, 6));
+}
+function refreshInv() {
   drawIconTo($('btnPotion').querySelector('canvas'), (c) => spr(c, 'flask_big_red', 8, 6));
   document.querySelectorAll('.ico').forEach((el) => {
     const r = SPR[el.dataset.sprite]; if (!r) return;
@@ -1498,18 +1730,18 @@ function setupControls() {
     const up = () => { el.classList.remove('pressed'); if (hold) input.attackHeld = false; };
     el.addEventListener('pointerup', up); el.addEventListener('pointercancel', up);
   };
-  bind('btnAttack', doAttack, true);
-  bind('btnCharge', doCharge);
-  bind('btnWhirl', doWhirl);
+  bind('btnAttack', () => actMain(), true);
+  bind('btnCharge', () => act2());
+  bind('btnWhirl', () => act3());
   bind('btnPotion', doPotion);
 
   window.addEventListener('keydown', (e) => {
     audioUnlock();
     input.keys[e.code] = true;
     if (state !== 'play') { if (e.code === 'Escape' && state === 'pause') resume(); return; }
-    if (e.code === 'Space' || e.code === 'KeyJ') { input.attackHeld = true; doAttack(); }
-    if (e.code === 'KeyK') doCharge();
-    if (e.code === 'KeyL') doWhirl();
+    if (e.code === 'Space' || e.code === 'KeyJ') { input.attackHeld = true; actMain(); }
+    if (e.code === 'KeyK') act2();
+    if (e.code === 'KeyL') act3();
     if (e.code === 'KeyH') doPotion();
     if (e.code === 'Escape') pause();
   });
@@ -1523,7 +1755,7 @@ function setupControls() {
 // 14. ÉCRANS
 // ============================================================
 function showScreen(id) {
-  ['title', 'help', 'pause', 'death'].forEach((s) => $(s).classList.toggle('hidden', s !== id));
+  ['title', 'help', 'pause', 'death', 'classSel'].forEach((s) => $(s).classList.toggle('hidden', s !== id));
   setTimeout(refreshUpdateBar, 0);
 }
 function showTitle() {
@@ -1531,17 +1763,33 @@ function showTitle() {
   $('hud').classList.add('hidden');
   const run = store.get('rw_run', null);
   $('continueBtn').classList.toggle('hidden', !run);
-  if (run) $('continueBtn').textContent = `Continuer (étage ${run.floor})`;
+  if (run) $('continueBtn').textContent = `Continuer : ${CLASSES[run.cls || 'warrior'].name}, étage ${run.floor}`;
   const parts = [];
   if (meta.gold) parts.push(`Or en réserve : ${meta.gold}`);
   if (meta.bestFloor) parts.push(`Record : étage ${meta.bestFloor}`);
   $('titleStats').textContent = parts.join(' · ');
   showScreen('title');
 }
+function drawPortraits() {
+  document.querySelectorAll('canvas[data-portrait]').forEach((cv) => {
+    const base = cv.dataset.portrait;
+    cv.width = 24; cv.height = 42;
+    const c = cv.getContext('2d'); c.imageSmoothingEnabled = false;
+    c.clearRect(0, 0, 24, 42);
+    c.fillStyle = 'rgba(0,0,0,.35)'; c.beginPath(); c.ellipse(12, 37, 8, 3, 0, 0, 6.29); c.fill();
+    const w = base === 'wizzard_m' ? 'weapon_green_magic_staff' : 'weapon_regular_sword';
+    const r = SPR[w];
+    c.drawImage(atlas, r[0], r[1], r[2], r[3], 15, 30 - r[3] + 6, r[2], r[3]);
+    spr(c, base + '_idle_anim_f0', 4, 10);
+  });
+}
 function pause() { if (state !== 'play') return; state = 'pause'; input.attackHeld = false; input.mx = input.my = 0; showScreen('pause'); muffleMusic(true); }
 function resume() { showScreen(null); state = 'play'; last = performance.now(); muffleMusic(false); }
 function setupScreens() {
-  $('newBtn').onclick = () => { audioUnlock(); store.del('rw_run'); startRun(null); refreshIcons(); toast('Étage 1', '#c9a2ff', 1.6); };
+  const begin = (cls) => { audioUnlock(); store.del('rw_run'); startRun(null, cls); refreshIcons(); toast(`${CLASSES[cls].name} · Étage 1`, '#c9a2ff', 1.6); };
+  $('newBtn').onclick = () => { drawPortraits(); showScreen('classSel'); };
+  document.querySelectorAll('.classCard').forEach((b) => { b.onclick = () => begin(b.dataset.cls); });
+  $('classBack').onclick = showTitle;
   $('continueBtn').onclick = () => { audioUnlock(); const r = store.get('rw_run', null); if (r) { startRun(r); refreshIcons(); toast(`Étage ${r.floor}`, '#c9a2ff', 1.6); } };
   $('helpBtn').onclick = () => showScreen('help');
   $('helpBack').onclick = () => showScreen('title');
@@ -1559,7 +1807,7 @@ function setupScreens() {
   // le premier toucher sur l'écran titre lance la musique (iOS l'exige)
   document.addEventListener('pointerdown', () => audioUnlock(), { passive: true });
   $('quitBtn').onclick = () => { if (G) { meta.gold += G.p.gold; saveMeta(); } store.del('rw_run'); G = null; muffleMusic(false); showTitle(); };
-  $('retryBtn').onclick = () => { startRun(null); refreshIcons(); toast('Étage 1', '#c9a2ff', 1.6); };
+  $('retryBtn').onclick = () => { drawPortraits(); showScreen('classSel'); };
   $('menuBtn').onclick = showTitle;
 }
 
@@ -1644,4 +1892,4 @@ async function applyUpdate() {
 boot();
 
 // accès pour les tests
-window.__rw = { checkUpdate, get pending() { return pendingUpdate; }, get G() { return G; }, get state() { return state; }, get music() { return music; }, get actx() { return actx; }, SFX, startRun, nextFloor, doAttack, doCharge, doWhirl };
+window.__rw = { get actMain() { return actMain; }, get act2() { return act2; }, get act3() { return act3; }, checkUpdate, get pending() { return pendingUpdate; }, get G() { return G; }, get state() { return state; }, get music() { return music; }, get actx() { return actx; }, SFX, startRun, nextFloor, doAttack, doCharge, doWhirl };

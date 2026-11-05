@@ -21,7 +21,7 @@
 <div id="hud" class="hidden">
   <div id="frame">
     <div class="bar hp"><div class="fill" id="hpFill"></div><span id="hpText">100 / 100</span></div>
-    <div class="bar rage"><div class="fill" id="rageFill"></div><span id="rageText">0 rage</span></div>
+    <div class="bar rage" id="resBar"><div class="fill" id="rageFill"></div><span id="rageText">0 rage</span></div>
     <div id="infos">
       <span id="floorLabel">Étage 1</span>
       <span class="inv"><i class="ico" data-sprite="coin_anim_f0"></i><b id="goldText">0</b></span>
@@ -36,9 +36,9 @@
   <div id="stickZone"><div id="stickBase"><div id="stickKnob"></div></div></div>
   <div id="actions">
     <button class="act" id="btnPotion" data-label="Potion"><canvas></canvas><span class="cd"></span><b class="count" id="potionCount">0</b></button>
-    <button class="act" id="btnWhirl" data-label="Tourbillon"><canvas></canvas><span class="cd"></span><b class="cost">35</b></button>
-    <button class="act" id="btnCharge" data-label="Charge"><canvas></canvas><span class="cd"></span></button>
-    <button class="act big" id="btnAttack" data-label="Frappe"><canvas></canvas><span class="cd"></span></button>
+    <button class="act" id="btnWhirl" data-label="Tourbillon"><canvas></canvas><span class="cd"></span><b class="cost" id="costWhirl">35</b></button>
+    <button class="act" id="btnCharge" data-label="Charge"><canvas></canvas><span class="cd"></span><b class="cost" id="costCharge"></b></button>
+    <button class="act big" id="btnAttack" data-label="Frappe"><canvas></canvas><span class="cd"></span><b class="cost" id="costAttack"></b></button>
   </div>
 </div>
 
@@ -61,10 +61,17 @@
 <div id="help" class="screen hidden">
   <h2>Comment jouer</h2>
   <ul>
-    <li><b>Déplacement :</b> pose ton pouce n'importe où sur la moitié gauche de l'écran.</li>
+    <li><b>Déplacement :</b> pose ton pouce n'importe où sur la moitié gauche de l'écran. Garde le gros bouton appuyé pour attaquer en continu.</li>
+    <li class="cls">Guerrier</li>
     <li><b>Frappe :</b> attaque à l'épée. Chaque coup réussi remplit ta <span class="r">rage</span>.</li>
     <li><b>Charge :</b> fonce sur l'ennemi le plus proche et l'étourdit. Donne de la rage.</li>
     <li><b>Tourbillon :</b> coûte 35 de rage, frappe tout autour de toi.</li>
+    <li class="cls">Mage</li>
+    <li><b>Boule de feu :</b> reste immobile le temps de l'incantation. Si tu bouges, le sort est <span class="r">interrompu</span>. Elle explose et enflamme les ennemis.</li>
+    <li><b>Transfert :</b> téléportation dans la direction du joystick (ou loin du danger).</li>
+    <li><b>Nova de givre :</b> gèle les ennemis autour de toi. Une boule de feu sur un ennemi gelé est <span class="b">toujours critique</span>.</li>
+    <li>Ton <span class="b">mana</span> remonte tout seul, plus vite hors combat.</li>
+    <li class="cls">Conseils</li>
     <li>Quand un ennemi <span class="r">clignote en rouge</span>, il prépare un coup : éloigne-toi !</li>
     <li>Les salles se verrouillent tant que les monstres sont en vie.</li>
     <li>Trouve la <span class="y">clé</span> pour ouvrir la salle scellée et son trésor.</li>
@@ -72,6 +79,25 @@
     <li>Bats le gardien, puis entre dans la <span class="p">faille</span> pour descendre.</li>
   </ul>
   <button id="helpBack">Retour</button>
+</div>
+
+<div id="classSel" class="screen hidden">
+  <h2>Choisis ta classe</h2>
+  <div class="cards">
+    <button class="classCard" data-cls="warrior">
+      <canvas data-portrait="knight_m"></canvas>
+      <b>Guerrier</b>
+      <span class="role r">Corps à corps · Rage</span>
+      <span>Solide (100 PV). Frappe, Charge et Tourbillon. Plus il se bat, plus il devient dangereux.</span>
+    </button>
+    <button class="classCard" data-cls="mage">
+      <canvas data-portrait="wizzard_m"></canvas>
+      <b>Mage</b>
+      <span class="role b">Distance · Mana</span>
+      <span>Fragile (75 PV). Boules de feu à incanter, Transfert et Nova de givre. Gèle, puis brise !</span>
+    </button>
+  </div>
+  <button id="classBack" class="ghost">Retour</button>
 </div>
 
 <div id="pause" class="screen hidden">

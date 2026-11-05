@@ -95,3 +95,16 @@ h2.red { color: #ff6a5a; }
 #updateBar button { flex: none; font-size: 15px; padding: 9px 12px; background: linear-gradient(#ffd66a, #c9961e); color: #2a1a05; font-weight: 700; border: 2px solid #000; box-shadow: 0 3px 0 #000; }
 #updateBar button:disabled { opacity: .7; }
 @keyframes drop { from { transform: translate(-50%, -30px); opacity: 0; } }
+
+.bar.rage.mana .fill { background: linear-gradient(#5aa8ff, #1f4fb8); }
+.b { color: #7ab8ff; }
+#help li.cls { list-style: none; margin: 12px 0 4px -18px; color: var(--rift-glow); font-weight: 700; font-size: 17px; }
+.act .cost { color: #ffb0a6; }
+.cards { display: flex; gap: 12px; width: min(94vw, 520px); margin-bottom: 18px; }
+.classCard { flex: 1; display: flex; flex-direction: column; align-items: center; gap: 6px; padding: 14px 10px; background: linear-gradient(#2e1d48, #1a1028); border: 2px solid #000; box-shadow: inset 0 0 0 2px #5a3f80, 0 4px 0 #000; font-size: 13px; line-height: 1.35; color: #cfc3e0; }
+.classCard b { font-size: 20px; color: #f4ecff; }
+.classCard .role { font-size: 13px; font-weight: 700; }
+.classCard canvas { width: 72px; height: 126px; image-rendering: pixelated; }
+.classCard:active { transform: translateY(2px); box-shadow: inset 0 0 0 2px #a46bff, 0 2px 0 #000; }
+#classBack { font-size: 16px; padding: 10px 28px; background: rgba(30,20,45,.8); border: 2px solid #000; box-shadow: inset 0 0 0 2px #3a2a4d, 0 3px 0 #000; }
+@media (max-height: 500px) { .cards { width: min(94vw, 640px); } .classCard canvas { width: 48px; height: 84px; } .classCard { padding: 8px; } }
