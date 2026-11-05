@@ -1,6 +1,7 @@
 /* RIFTWALKER — roguelike de donjons (V1 : le Guerrier)
    Tout le jeu tient dans ce fichier. Graphismes : 0x72 Dungeon Tileset II (CC0). */
 'use strict';
+const APP_VERSION = '1.2.0';
 
 // ============================================================
 // 1. OUTILS
@@ -1523,6 +1524,7 @@ function setupControls() {
 // ============================================================
 function showScreen(id) {
   ['title', 'help', 'pause', 'death'].forEach((s) => $(s).classList.toggle('hidden', s !== id));
+  setTimeout(refreshUpdateBar, 0);
 }
 function showTitle() {
   state = 'title';
@@ -1591,9 +1593,55 @@ async function boot() {
   refreshIcons();
   showTitle();
   requestAnimationFrame(frame);
-  if ('serviceWorker' in navigator && location.protocol === 'https:') navigator.serviceWorker.register('sw.js').catch(() => {});
+  setupUpdates();
+}
+
+// ============================================================
+// 16. MISES À JOUR
+// ============================================================
+let swReg = null, pendingUpdate = null, updateToastShown = false;
+function setupUpdates() {
+  $('versionLabel').textContent = 'v' + APP_VERSION;
+  if ('serviceWorker' in navigator && location.protocol === 'https:') {
+    navigator.serviceWorker.register('sw.js', { updateViaCache: 'none' }).then((r) => { swReg = r; }).catch(() => {});
+  }
+  $('updateBtn').onclick = applyUpdate;
+  setTimeout(checkUpdate, 1500);
+  setInterval(checkUpdate, 3 * 60 * 1000);
+  document.addEventListener('visibilitychange', () => { if (!document.hidden) checkUpdate(); });
+}
+async function checkUpdate() {
+  if (pendingUpdate) return;
+  try {
+    const r = await fetch('version.json?t=' + Date.now(), { cache: 'no-store' });
+    if (!r.ok) return;
+    const info = await r.json();
+    if (info.version && info.version !== APP_VERSION) { pendingUpdate = info; refreshUpdateBar(); }
+  } catch (e) { /* hors ligne : on réessaiera plus tard */ }
+}
+function refreshUpdateBar() {
+  const show = !!pendingUpdate && state !== 'play';
+  $('updateBar').classList.toggle('hidden', !show);
+  if (pendingUpdate) $('updateNotes').textContent = pendingUpdate.notes ? 'Nouveautés : ' + pendingUpdate.notes : '';
+  if (pendingUpdate && state === 'play' && !updateToastShown) {
+    updateToastShown = true;
+    toast('Mise à jour disponible<br><small>Ouvre la pause pour l’installer</small>', '#c9a2ff', 3);
+  }
+}
+async function applyUpdate() {
+  const btn = $('updateBtn');
+  btn.textContent = 'Mise à jour…'; btn.disabled = true;
+  if (G && (state === 'play' || state === 'pause')) saveRun(); // tu reprendras au début de l'étage
+  let done = false;
+  const reload = () => { if (done) return; done = true; location.reload(); };
+  if ('serviceWorker' in navigator) navigator.serviceWorker.addEventListener('controllerchange', reload);
+  try { if (swReg) await swReg.update(); } catch (e) { }
+  setTimeout(async () => {
+    try { const ks = await caches.keys(); await Promise.all(ks.map((k) => caches.delete(k))); } catch (e) { }
+    reload();
+  }, 2500);
 }
 boot();
 
 // accès pour les tests
-window.__rw = { get G() { return G; }, get state() { return state; }, get music() { return music; }, get actx() { return actx; }, SFX, startRun, nextFloor, doAttack, doCharge, doWhirl };
+window.__rw = { checkUpdate, get pending() { return pendingUpdate; }, get G() { return G; }, get state() { return state; }, get music() { return music; }, get actx() { return actx; }, SFX, startRun, nextFloor, doAttack, doCharge, doWhirl };

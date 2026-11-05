@@ -55,7 +55,7 @@
     <div class="row"><button class="ghost musicBtn">Musique</button><button class="ghost sfxBtn">Effets</button></div>
   </div>
   <p class="stats" id="titleStats"></p>
-  <p class="credit">Graphismes : 0x72 (Dungeon Tileset II, CC0)</p>
+  <p class="credit">Graphismes : 0x72 (Dungeon Tileset II, CC0) · <span id="versionLabel"></span></p>
 </div>
 
 <div id="help" class="screen hidden">
@@ -87,6 +87,11 @@
   <h2 class="red">Tu es tombé</h2>
   <p id="deathText"></p>
   <div class="menu"><button id="retryBtn">Nouvelle expédition</button><button id="menuBtn" class="ghost">Menu</button></div>
+</div>
+
+<div id="updateBar" class="hidden">
+  <div><b>Nouvelle version</b><br><span id="updateNotes"></span></div>
+  <button id="updateBtn">Mettre à jour</button>
 </div>
 
 <div id="fade"></div>

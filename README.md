@@ -15,3 +15,6 @@ Roguelike de donjons pour iPhone (site web jouable hors ligne).
 ## Crédits
 - Graphismes : [0x72 — Dungeon Tileset II](https://0x72.itch.io/dungeontileset-ii) (CC0)
 - Police : Pixelify Sans (SIL Open Font License)
+
+## Publier une mise à jour
+Changer le même numéro de version à trois endroits : `APP_VERSION` dans `game.js`, `VERSION` dans `sw.js`, et `version.json` (avec une phrase de nouveautés). Les joueurs voient alors un bandeau « Nouvelle version » avec un bouton « Mettre à jour ».

@@ -1,6 +1,6 @@
 // Service worker : garde une copie du jeu dans le téléphone pour jouer hors ligne.
-// Change VERSION à chaque mise à jour pour que les téléphones récupèrent la nouvelle version.
-const VERSION = 'riftwalker-v1.1.0';
+// À chaque mise à jour, changer VERSION ici + APP_VERSION dans game.js + version.json.
+const VERSION = 'riftwalker-1.2.0';
 const FILES = [
   './', 'index.html', 'style.css', 'game.js', 'manifest.json',
   'assets/atlas.png', 'assets/atlas.json',
@@ -9,7 +9,12 @@ const FILES = [
 ];
 
 self.addEventListener('install', (e) => {
-  e.waitUntil(caches.open(VERSION).then((c) => c.addAll(FILES)).then(() => self.skipWaiting()));
+  // cache: 'reload' = on va chercher la version fraîche sur GitHub, pas une vieille copie
+  e.waitUntil(
+    caches.open(VERSION)
+      .then((c) => c.addAll(FILES.map((f) => new Request(f, { cache: 'reload' }))))
+      .then(() => self.skipWaiting())
+  );
 });
 
 self.addEventListener('activate', (e) => {
@@ -20,16 +25,20 @@ self.addEventListener('activate', (e) => {
   );
 });
 
-// Réseau d'abord (pour recevoir les mises à jour), copie locale si pas de connexion.
 self.addEventListener('fetch', (e) => {
-  if (e.request.method !== 'GET') return;
+  const req = e.request;
+  if (req.method !== 'GET') return;
+  const url = new URL(req.url);
+  if (url.origin !== location.origin) return;
+  // le fichier de version n'est jamais gardé en copie
+  if (url.pathname.endsWith('version.json')) { e.respondWith(fetch(req.url, { cache: 'no-store' })); return; }
+  // Réseau d'abord (toujours vérifié auprès de GitHub), copie locale si pas de connexion
   e.respondWith(
-    fetch(e.request)
+    fetch(req.url, { cache: 'no-cache', credentials: 'same-origin' })
       .then((res) => {
-        const copy = res.clone();
-        caches.open(VERSION).then((c) => c.put(e.request, copy));
+        if (res.ok) { const copy = res.clone(); caches.open(VERSION).then((c) => c.put(req, copy)); }
         return res;
       })
-      .catch(() => caches.match(e.request, { ignoreSearch: true }).then((r) => r || caches.match('index.html')))
+      .catch(() => caches.match(req, { ignoreSearch: true }).then((r) => r || caches.match('index.html')))
   );
 });
