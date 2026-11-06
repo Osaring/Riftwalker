@@ -1,7 +1,7 @@
 /* RIFTWALKER — roguelike de donjons (V1 : le Guerrier)
    Tout le jeu tient dans ce fichier. Graphismes : 0x72 Dungeon Tileset II (CC0). */
 'use strict';
-const APP_VERSION = '1.9.1';
+const APP_VERSION = '1.10.0';
 
 // ============================================================
 // 1. OUTILS
@@ -35,7 +35,7 @@ const store = {
 };
 let meta = store.get('rw_meta', { gold: 0, bestFloor: 0, sound: true, music: true, runs: 0 });
 if (meta.music === undefined) meta.music = true;
-if (!meta.gfx) meta.gfx = 'classic';
+meta.gfx = 'tps'; // le jeu se joue uniquement en vue à la 3e personne
 if (meta.sound === undefined) meta.sound = true;
 const saveMeta = () => store.set('rw_meta', meta);
 
@@ -1682,7 +1682,7 @@ function renderOverlay3D() {
   for (const e of G.enemies) {
     if (e.dead || !e.active) continue;
     const look = { big_zombie: 1.9, ogre: 2, big_demon: 2.15, goblin: 0.8, imp: 0.8, tiny_zombie: 0.85 }[e.kind] || 1;
-    const [x, y, ok] = P(e.x, e.y, (e.kind === 'mimic' ? 0.7 : 1.3 * look) * R3D.charScale);
+    const [x, y, ok] = P(e.x, e.y, e.kind === 'mimic' ? 0.7 : R3D.heightOf(e) + 0.12);
     if (!ok) continue;
     if (e.hp < e.maxHp) {
       const bw = e.d.elite ? 28 : 15, bx = Math.round(x - bw / 2), by = Math.round(y - 6);
@@ -1695,7 +1695,7 @@ function renderOverlay3D() {
   }
   // barre d'incantation
   if (p.cls === 'mage' && p.casting > 0) {
-    const [x, y] = P(p.x, p.y, 1.75 * R3D.charScale);
+    const [x, y] = P(p.x, p.y, R3D.heightOf('player') + 0.1);
     const kk = 1 - p.casting / p.castT, bw = 24, bx = Math.round(x - bw / 2), by = Math.round(y - 4);
     ctx.fillStyle = '#000'; ctx.fillRect(bx - 1, by - 1, bw + 2, 5);
     ctx.fillStyle = '#3a2008'; ctx.fillRect(bx, by, bw, 3);
@@ -1704,7 +1704,7 @@ function renderOverlay3D() {
   // nombres de dégâts
   ctx.textAlign = 'center';
   for (const tx of G.texts) {
-    const [x, y, ok] = P(tx.x, tx.y + 18, 1.3 * R3D.charScale);
+    const [x, y, ok] = P(tx.x, tx.y + 18, 1.05);
     if (!ok) continue;
     const kk = tx.t / tx.T;
     const s = tx.crit ? tx.size * (1 + Math.max(0, kk - 0.8) * 3) : tx.size;
@@ -2218,7 +2218,7 @@ async function setGfx(mode) {
 let R3D = null;
 async function start3D() {
   try {
-    if (!R3D) { toast('Chargement de la 3D…', '#c9a2ff', 4); const m = await import('./r3d.js'); R3D = await m.create(canvas3d(), {
+    if (!R3D) { const m = await import('./r3d.js'); R3D = await m.create(canvas3d(), {
       getGame: () => G, getState: () => state, getStyle: () => (GFX === 'hd3d' ? 'pixel' : 'cel'),
       getCamMode: () => (GFX === 'tps' ? 'tps' : 'top'), getYaw: () => camYaw, getPitch: () => camPitch,
       groundCanvas, playerKey: () => playerHDKey(G.p), enemyKey: enemyHDKey,
@@ -2234,15 +2234,16 @@ function stop3D() { if (R3D) R3D.enable(false); document.body.classList.remove('
 function canvas3d() { let c = document.getElementById('game3d'); if (!c) { c = document.createElement('canvas'); c.id = 'game3d'; document.body.insertBefore(c, canvas.nextSibling); } return c; }
 
 async function boot() {
-  GFX = is3D(meta.gfx) ? 'classic' : meta.gfx;
+  GFX = 'classic';
   resize();
   try { await loadAssets(); } catch (e) { $('loading').textContent = 'Erreur de chargement. Vérifie ta connexion puis relance.'; return; }
+  $('loading').textContent = 'Chargement du donjon…';
+  await setGfx('tps');
   $('loading').classList.add('hidden');
   setupControls();
   setupScreens();
   refreshIcons();
   showTitle();
-  if (meta.gfx !== 'classic') setGfx(meta.gfx);
   requestAnimationFrame(frame);
   setupUpdates();
 }

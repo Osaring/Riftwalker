@@ -95,11 +95,16 @@ export async function create(canvas, api) {
   // --- chargement des modèles ---
   const loader = new GLTFLoader();
   const load = (f) => new Promise((res, rej) => loader.load('assets/3d/' + f, res, undefined, rej));
-  const [dungeon, props, knight, mage, skel, hall, ...anims] = await Promise.all(['dungeon.glb', 'props.glb', 'knight.glb', 'mage.glb', 'skeleton.glb', 'hall.glb',
-    'anim_general.glb', 'anim_movementbasic.glb', 'anim_combatmelee.glb', 'anim_combatranged.glb', 'anim_special.glb'].map(load));
-  const CLIPS = {};
-  for (const g of anims) for (const c of g.animations) CLIPS[c.name] = c;
+  const [dungeon, props, humans, hall, animH] = await Promise.all(['dungeon.glb', 'props.glb', 'humans.glb', 'hall.glb', 'anim_human.glb'].map(load));
   const piece = (gltf, name) => gltf.scenes.find((s) => s.name === name);
+  // Personnages aux proportions réalistes (Quaternius, CC0) : tous partagent le même squelette.
+  // Le chargeur renomme les os en double (« spine_01_3 »…) : on leur rend leur vrai nom
+  // pour que vêtements, cheveux et animations s'accrochent aux mêmes os.
+  const BONES = new Set(); piece(humans, 'ranger').traverse((o) => { if (o.isBone) BONES.add(o.name); });
+  const canon = (n) => { if (BONES.has(n)) return n; const m = n.match(/^(.*)_\d+$/); return m && BONES.has(m[1]) ? m[1] : n; };
+  humans.scenes.forEach((sc) => sc.traverse((o) => { if (o.isBone) o.name = canon(o.name); }));
+  const CLIPS = {};
+  for (const c of animH.animations) { c.tracks.forEach((t) => { const i = t.name.lastIndexOf('.'); t.name = canon(t.name.slice(0, i)) + t.name.slice(i); }); CLIPS[c.name] = c; }
   // certains objets du château ne sont pas centrés sur leur origine : on les recentre (x/z) et on les pose au sol
   for (const n of ['vase', 'crate', 'barrel', 'statue']) {
     const sc = piece(hall, n); if (!sc) continue;
@@ -153,7 +158,7 @@ export async function create(canvas, api) {
 
   const lvKey = (G) => G.D.seed + ':' + G.floorN + ':' + style + ':' + api.getCamMode();
   const IN3P = () => api.getCamMode() === 'tps';
-  const CS = () => (IN3P() ? 0.6 : 1); // échelle des personnages
+  const CS = () => 1; // échelle des effets
 
   // =============================================================
   // VUE 3e PERSONNE : grandes salles de château (Quaternius, Modular Dungeon, CC0)
@@ -169,7 +174,7 @@ export async function create(canvas, api) {
     const roomOf = new Int16Array(MW * MH).fill(-1);
     D.rooms.forEach((r, i) => { for (let y = r.y; y < r.y + r.h; y++) for (let x = r.x; x < r.x + r.w; x++) roomOf[y * MW + x] = i; });
     const inRoom = (x, y) => isF(x, y) && roomOf[y * MW + x] >= 0;
-    const HR = 3.4, HC = 2.1; // hauteur sous plafond : salles / couloirs
+    const HR = 3.9, HC = 2.5; // hauteur sous plafond : salles / couloirs
     const H = (x, y) => (inRoom(x, y) ? HR : HC);
     const M4 = (x, y, z, rx, ry, sx, sy, sz) => new THREE.Matrix4().compose(new THREE.Vector3(x, y, z), new THREE.Quaternion().setFromEuler(new THREE.Euler(rx, ry, 0)), new THREE.Vector3(sx, sy, sz));
     const floors = [], ceils = [], ceilsLow = [], walls = [], cols = [], beams = [], torchesM = [], banners = [], webs = [], crates = [], barrels = [], vases = [], bricks = [];
@@ -565,35 +570,99 @@ export async function create(canvas, api) {
   // =============================================================
   // PERSONNAGES
   // =============================================================
-  const PROTO = { knight: knight.scene, mage: mage.scene, skel: skel.scene };
+  // ennemis : [teinte de la peau, taille, arme]
   const ENEMY_LOOK = {
-    tiny_zombie: [0xa6d88f, 0.85], goblin: [0x8fe07a, 0.8], skelet: [0xffffff, 1], orc_warrior: [0x7fbf6a, 1.1, 'sword'], masked_orc: [0xa0a6b8, 1.15, 'sword'],
+    tiny_zombie: [0x9ac58a, 0.8], goblin: [0x7fd06a, 0.78], skelet: [0xd8d4c8, 1], orc_warrior: [0x7fbf6a, 1.08, 'sword'], masked_orc: [0xa0a6b8, 1.12, 'sword'],
     chort: [0xe08060, 1.0], imp: [0xc59aff, 0.8, 'staff'], orc_shaman: [0x6ad0c0, 1.0, 'staff'],
-    big_zombie: [0xa6d88f, 1.9], ogre: [0xc49a74, 2.0, 'sword'], big_demon: [0xff6a5a, 2.15, 'sword'],
+    big_zombie: [0x9ac58a, 1.9], ogre: [0xc49a74, 2.0, 'sword'], big_demon: [0xff6a5a, 2.15, 'sword'],
   };
-  function attach(root, boneName, gltfScene, scale = 1) {
-    let bone = null; root.traverse((o) => { if (o.name === boneName) bone = o; });
+  const SKIN = /Superhero|Regular_Male/;
+  function attach(root, boneName, gltfScene, scale = 1, rot = null) {
+    let bone = null; root.traverse((o) => { if (o.isBone && o.name === boneName) bone = o; });
+    if (!bone) return null;
+    const w = gltfScene.clone(true);
+    w.traverse((o) => { if (o.isMesh) o.material = o.material.clone(); });
+    w.scale.setScalar(scale); if (rot) w.rotation.set(...rot); bone.add(w);
+    return w;
+  }
+  // assemble un personnage : tête + tenue + cheveux, tous accrochés au même squelette
+  function compose(parts, hide = []) {
+    const base = SkeletonUtils.clone(piece(humans, 'head'));
+    const bones = {}; base.traverse((o) => { if (o.isBone) bones[o.name] = o; });
+    let host = null; base.traverse((o) => { if (o.isSkinnedMesh && !host) host = o; });
+    for (const p of parts) {
+      const c = SkeletonUtils.clone(piece(humans, p));
+      const meshes = []; c.traverse((o) => { if (o.isSkinnedMesh && !hide.some((h) => o.name.includes(h))) meshes.push(o); });
+      for (const m of meshes) { const sk = m.skeleton; m.bind(new THREE.Skeleton(sk.bones.map((b) => bones[b.name] || b), sk.boneInverses), m.bindMatrix); host.parent.add(m); }
+    }
+    base.traverse((o) => { if (o.isMesh) { o.material = o.material.clone(); o.frustumCulled = false; o.castShadow = false; } });
+    return base;
+  }
+  const HERO_H = 1.2; // taille du héros (une case de la carte = 1)
+  // change la couleur des vêtements verts de la tenue (tunique, capuche) sans toucher au cuir ni à la peau
+  const recolorCache = new Map();
+  function recolor(tex, hue, satK = 1, litK = 1) {
+    const key = tex.uuid + ':' + hue + ':' + satK + ':' + litK;
+    if (recolorCache.has(key)) return recolorCache.get(key);
+    const img = tex.image, c = document.createElement('canvas'); c.width = img.width; c.height = img.height;
+    const x = c.getContext('2d'); x.drawImage(img, 0, 0);
+    const d = x.getImageData(0, 0, c.width, c.height), a = d.data;
+    for (let i = 0; i < a.length; i += 4) {
+      const r = a[i] / 255, g = a[i + 1] / 255, b = a[i + 2] / 255, mx = Math.max(r, g, b), mn = Math.min(r, g, b), l = (mx + mn) / 2, dd = mx - mn;
+      if (dd < 0.06) continue;
+      let h = mx === r ? ((g - b) / dd) % 6 : mx === g ? (b - r) / dd + 2 : (r - g) / dd + 4; h *= 60; if (h < 0) h += 360;
+      if (h < 55 || h > 175) continue;                     // seulement les verts
+      const sat = Math.min(1, dd / (1 - Math.abs(2 * l - 1)) * satK), L = Math.min(1, l * litK);
+      const C = (1 - Math.abs(2 * L - 1)) * sat, X = C * (1 - Math.abs(((hue / 60) % 2) - 1)), m = L - C / 2;
+      const [R, G2, B] = hue < 60 ? [C, X, 0] : hue < 120 ? [X, C, 0] : hue < 180 ? [0, C, X] : hue < 240 ? [0, X, C] : hue < 300 ? [X, 0, C] : [C, 0, X];
+      a[i] = (R + m) * 255; a[i + 1] = (G2 + m) * 255; a[i + 2] = (B + m) * 255;
+    }
+    x.putImageData(d, 0, 0);
+    const t = tex.clone(); t.image = c; t.needsUpdate = true;
+    recolorCache.set(key, t); return t;
+  }
+  function attachStaff(root, len) {
+    let bone = null; root.traverse((o) => { if (o.isBone && o.name === 'hand_r') bone = o; });
     if (!bone) return;
-    const w = toonify(gltfScene.clone(), { outline: OUTLINE_PROP });
-    w.scale.setScalar(scale); bone.add(w);
+    const w = toonify(piece(props, 'staff').clone(), {});
+    const bb = new THREE.Box3().setFromObject(w), sz = bb.getSize(new THREE.Vector3());
+    const k = len / sz.y; w.scale.setScalar(k); w.rotation.x = Math.PI; w.position.y = (bb.min.y + sz.y * 0.38) * k; // cristal vers le haut
+    bone.add(w);
   }
   function makeChar(kind, cls) {
-    let root, tint = null, size = 1.2, weapon = null, isSkel = false;
-    if (kind === 'player') { root = SkeletonUtils.clone(cls === 'mage' ? PROTO.mage : PROTO.knight); size = 1.25; weapon = cls === 'mage' ? 'staff' : 'sword'; }
-    else { const L = ENEMY_LOOK[kind] || [0xffffff, 1]; root = SkeletonUtils.clone(PROTO.skel); tint = L[0]; size = 1.15 * L[1]; weapon = L[2] || null; isSkel = true; }
-    toonify(root, { outline: OUTLINE_CHAR, tint });
-    if (weapon === 'sword') attach(root, 'handslot.r', piece(props, 'sword_1handed'));
-    if (weapon === 'staff') attach(root, 'handslot.r', piece(props, 'staff'));
-    if (kind === 'player' && cls !== 'mage') attach(root, 'handslot.l', piece(props, 'shield_badge_color'));
+    let root, size, isSkel = false;
+    const tintMats = (re, col) => root.traverse((o) => { if (o.isMesh && re.test(o.material.name)) o.material.color.multiply(new THREE.Color(col)); });
+    if (kind === 'player') {
+      size = HERO_H;
+      if (cls === 'mage') {
+        root = compose(['ranger', 'brows'], ['Pauldron']);
+        root.traverse((o) => { if (o.isMesh && /Ranger/.test(o.material.name) && o.material.map) o.material.map = recolor(o.material.map, 250, 1.1, 1.15); });
+        attachStaff(root, 1.5);
+      } else {
+        root = compose(['ranger', 'hair', 'beard', 'brows'], ['Hood']);
+        root.traverse((o) => { if (o.isMesh && /Ranger/.test(o.material.name) && o.material.map) o.material.map = recolor(o.material.map, 356, 1.2, 1.05); });
+        attach(root, 'hand_r', piece(humans, 'sword'));
+        attach(root, 'hand_l', piece(humans, 'shield'));
+      }
+    } else {
+      const L = ENEMY_LOOK[kind] || [0xd8d4c8, 1];
+      // les géants restent sous le plafond : leur taille grandit moins vite
+      const k = L[1] < 1 ? L[1] : 1 + (L[1] - 1) * 0.45;
+      size = HERO_H * 0.97 * k; isSkel = true;
+      root = compose(['peasant']);
+      tintMats(SKIN, L[0]); tintMats(/Peasant/, 0x8a8078);
+      root.traverse((o) => { if (o.isMesh && /Eye/.test(o.material.name)) { o.material.emissive.setHex(0xff2a10); o.material.emissiveIntensity = 1.4; } });
+      if (L[2] === 'sword') attach(root, 'hand_r', piece(humans, 'sword'));
+      if (L[2] === 'staff') attachStaff(root, 1.3);
+    }
     const holder = new THREE.Group();
-    const s = size / 2.55 * CS(); root.scale.setScalar(s);
-    holder.add(root);
+    root.scale.setScalar(size / 1.87); holder.add(root);
     const mixer = new THREE.AnimationMixer(root);
-    const mats = []; root.traverse((o) => { if (o.isMesh && o.material.isMeshToonMaterial) mats.push(o.material); });
-    const blob = new THREE.Mesh(new THREE.CircleGeometry(0.32 * size / 1.2 * CS(), 16), new THREE.MeshBasicMaterial({ color: 0, transparent: true, opacity: 0.35, depthWrite: false }));
+    const mats = []; root.traverse((o) => { if (o.isMesh && o.material.emissive && !/Eye/.test(o.material.name)) { o.material.roughness = Math.max(0.6, o.material.roughness ?? 1); o.material.metalness = Math.min(0.3, o.material.metalness ?? 0); mats.push(o.material); } });
+    const blob = new THREE.Mesh(new THREE.CircleGeometry(0.3 * size / 1.2, 16), new THREE.MeshBasicMaterial({ color: 0, transparent: true, opacity: 0.4, depthWrite: false }));
     blob.rotation.x = -Math.PI / 2; blob.position.y = 0.02; holder.add(blob);
     scene.add(holder);
-    return { holder, root, mixer, mats, actions: {}, cur: null, isSkel, baseColors: mats.map((m) => m.color.clone()), dying: 0 };
+    return { holder, root, mixer, mats, actions: {}, cur: null, isSkel, baseColors: mats.map((m) => m.color.clone()), dying: 0, combo: 0, size };
   }
   function action(c, name, loop = true) {
     let a = c.actions[name];
@@ -813,21 +882,24 @@ export async function create(canvas, api) {
     if (!playerChar || playerCls !== p.cls) { if (playerChar) scene.remove(playerChar.holder); playerChar = makeChar('player', p.cls); playerCls = p.cls; }
     const pc = playerChar;
     pc.holder.position.set(W2(p.x), 0, W2(p.y));
-    pc.holder.rotation.y = Math.atan2(p.fx, p.fy);
+    pc.holder.rotation.y = Math.atan2(p.fx, p.fy) + (p.whirl > 0 ? (1 - p.whirl / 0.45) * Math.PI * 4 : 0);
     pc.holder.visible = !(p.inv > 0 && p.hurtT <= 0 && p.charging <= 0 && Math.floor(t * 20) % 2);
     if (api.getState() === 'dead' || p.hp <= 0) pose(pc, 'Death_A', Math.min(1, (pc.dying += dt) / 1.2));
     else {
       pc.dying = 0;
-      if (p.hurtT > 0) pose(pc, 'Hit_A', 1 - p.hurtT / 0.25);
+      if (p.hurtT > 0) pose(pc, 'Hit_A', (1 - p.hurtT / 0.25) * 0.6);
       else if (p.cls === 'mage') {
         if (p.casting > 0) play(pc, 'Ranged_Magic_Spellcasting', 1.3);
         else if (p.castFx > 0) pose(pc, p.castFx > 0.22 ? 'Ranged_Magic_Raise' : 'Ranged_Magic_Shoot', 1 - p.castFx / 0.3);
-        else if (p.moving) play(pc, 'Running_A', 1.1); else play(pc, 'Idle_A');
+        else if (p.moving) play(pc, 'Running_A', 1.05); else play(pc, 'Idle_A');
       } else {
-        if (p.whirl > 0) play(pc, 'Melee_2H_Attack_Spinning', 1.8);
-        else if (p.swing > 0) pose(pc, 'Melee_1H_Attack_Slice_Diagonal', 0.15 + (1 - p.swing / 0.2) * 0.7);
-        else if (p.charging > 0) play(pc, 'Running_A', 2);
-        else if (p.moving) play(pc, 'Running_A', 1.1); else play(pc, 'Idle_A');
+        // trois coups d'épée qui s'enchaînent
+        if (p.swing > 0 && !(pc.lastSwing > 0)) pc.combo++;
+        pc.lastSwing = p.swing;
+        if (p.whirl > 0) pose(pc, 'Combo_B', 0.2 + (1 - p.whirl / 0.45) * 0.5);
+        else if (p.swing > 0) pose(pc, ['Combo_A', 'Combo_B', 'Combo_C'][pc.combo % 3], 0.12 + (1 - p.swing / 0.2) * 0.55);
+        else if (p.charging > 0) play(pc, 'Sprint', 1.4);
+        else if (p.moving) play(pc, 'Running_A', 1.05); else play(pc, G.room && G.room.locked ? 'Sword_Idle' : 'Idle_A');
       }
     }
     setGlow(pc, p.hurtT > 0.15 ? 0xff2a2a : p.casting > 0 ? 0xff8a2a : 0x000000, p.hurtT > 0.15 ? 0.6 : p.casting > 0 ? 0.25 * (1 - p.casting / p.castT) : 0);
@@ -843,18 +915,18 @@ export async function create(canvas, api) {
       alive.add(e);
       c.holder.position.set(W2(e.x), e.dead ? -Math.max(0, c.dying - 1) * 0.8 : 0, W2(e.y));
       if (!e.dead && e.active) c.holder.rotation.y = Math.atan2(p.x - e.x, p.y - e.y);
-      if (e.dead) { c.dying += dt; pose(c, 'Skeletons_Death', Math.min(1, c.dying / 0.9)); }
+      if (e.dead) { c.dying += dt; pose(c, 'Death_A', Math.min(1, c.dying / 1.1)); }
       else if (e.frozen > 0) { if (c.cur) c.cur.paused = true; }
       else if (!e.active) play(c, 'Skeletons_Idle', 0.6);
       else if (e.state === 'windup' || e.state === 'slam') {
         const k = e.state === 'slam' ? 1 - e.t / 1.0 : 1 - e.t / e.d.windup;
         if (e.d.ranged) pose(c, 'Ranged_Magic_Spellcasting', k * 0.6);
-        else pose(c, e.state === 'slam' ? 'Melee_2H_Attack_Chop' : 'Melee_1H_Attack_Chop', k * 0.38);
+        else pose(c, e.state === 'slam' || (ENEMY_LOOK[e.kind] || [])[2] === 'sword' ? 'Melee_2H_Attack_Chop' : 'Melee_1H_Attack_Chop', k * 0.38);
       } else if (e.state === 'recover') {
         if (e.d.ranged) pose(c, 'Ranged_Magic_Shoot', 0.5 + (1 - e.t / 0.3) * 0.5);
-        else pose(c, 'Melee_1H_Attack_Chop', 0.38 + (1 - Math.min(1, e.t / 0.6)) * 0.6);
+        else pose(c, (ENEMY_LOOK[e.kind] || [])[2] === 'sword' ? 'Melee_2H_Attack_Chop' : 'Melee_1H_Attack_Chop', 0.38 + (1 - Math.min(1, e.t / 0.6)) * 0.6);
       } else if (e.stun > 0) pose(c, 'Hit_A', 0.4);
-      else if (e.moving) play(c, 'Skeletons_Walking', 1.2 * (e.d.spd / 40)); else play(c, 'Skeletons_Idle');
+      else if (e.moving) { if (e.d.spd > 48) play(c, 'Running_A', 0.9 * (e.d.spd / 60)); else play(c, 'Skeletons_Walking', 1.3 * (e.d.spd / 40)); } else play(c, 'Skeletons_Idle');
       // couleurs : coup reçu, gel, préparation d'attaque, brûlure
       if (e.flash > 0) setGlow(c, 0xffffff, 0.8);
       else if (e.frozen > 0) { setGlow(c, 0x5ad0ff, 0.55); }
@@ -992,18 +1064,26 @@ export async function create(canvas, api) {
       const fx = Math.sin(yaw), fz = -Math.cos(yaw), rx = -fz, rz = fx;
       const px = W2(p.x), pz = W2(p.y);
       const free = (x, z) => { const tx = Math.floor(x), tz = Math.floor(z); return tx >= 0 && tz >= 0 && tx < G.MW && tz < G.MH && G.D.tiles[tz * G.MW + tx] === 1; };
-      let side = camera.aspect < 1 ? 0.24 : 0.42;
-      if (!free(px + rx * (side + 0.15), pz + rz * (side + 0.15))) side = 0;
-      const head = 0.62;
+      let side = camera.aspect < 1 ? 0.32 : 0.55;
+      if (!free(px + rx * (side + 0.15), pz + rz * (side + 0.15))) side = free(px + rx * 0.25, pz + rz * 0.25) ? 0.1 : 0;
+      const head = HERO_H * 0.92;
       const pvx = px + rx * side, pvz = pz + rz * side;
-      let back = 1.75;
-      for (let k = 0.2; k <= back; k += 0.05) { if (!free(pvx - fx * k * Math.cos(pitch), pvz - fz * k * Math.cos(pitch))) { back = Math.max(0.35, k - 0.18); break; } }
-      const tx = pvx - fx * back * Math.cos(pitch), tz = pvz - fz * back * Math.cos(pitch);
+      const BACK = camera.aspect < 1 ? 2.6 : 2.25;
+      let back = BACK;
+      // la caméra garde ~25 cm de marge avec les murs et colonnes (sinon elle passerait au travers)
+      const M = 0.25, freeM = (x, z) => free(x + M, z + M) && free(x - M, z + M) && free(x + M, z - M) && free(x - M, z - M);
+      const test = freeM(pvx, pvz) ? freeM : free; // collé au mur : on se contente du test simple
+      for (let k = 0.2; k <= back; k += 0.05) { if (!test(pvx - fx * k * Math.cos(pitch), pvz - fz * k * Math.cos(pitch))) { back = Math.max(0.3, k - 0.1); break; } }
+      let tx = pvx - fx * back * Math.cos(pitch), tz = pvz - fz * back * Math.cos(pitch);
+      // jamais à moins de 22 cm d'un mur (sinon on voit l'intérieur du mur, tout noir)
+      { const cx = Math.floor(tx), cz = Math.floor(tz), m = 0.22;
+        if (!free(cx - 1, cz) && tx - cx < m) tx = cx + m; if (!free(cx + 1, cz) && cx + 1 - tx < m) tx = cx + 1 - m;
+        if (!free(cx, cz - 1) && tz - cz < m) tz = cz + m; if (!free(cx, cz + 1) && cz + 1 - tz < m) tz = cz + 1 - m; }
       // dos au mur : la caméra monte et regarde par-dessus la tête au lieu de rentrer dans le héros
-      const close = Math.max(0, 1.75 - back);
+      const close = Math.max(0, BACK - back);
       const ti = Math.floor(tz) * G.MW + Math.floor(tx);
-      const ceil = level.hall && level.hmap ? (level.hmap[ti] || 2.1) - 0.25 : 4;
-      const up = Math.min(ceil, head + 0.18 + back * Math.sin(pitch) + close * 0.75);
+      const ceil = level.hall && level.hmap ? (level.hmap[ti] || 2.5) - 0.3 : 4;
+      const up = Math.min(ceil, head + 0.25 + back * Math.sin(pitch) + close * 0.6);
       const ld = 5 - close * 2.2;
       const lx = pvx + fx * ld, lz = pvz + fz * ld, ly = head - ld * Math.tan(pitch) * 0.55 - close * 0.35;
       if (!camInit) { camPos.set(tx, up, tz); camLook.set(lx, ly, lz); camInit = true; }
@@ -1031,5 +1111,7 @@ export async function create(canvas, api) {
     canvas.style.display = on ? 'block' : 'none';
     if (on) { resize(); clock.last = performance.now(); }
   }
-  return { render, project, enable, setStyle, resize, get charScale() { return CS(); }, get enabled() { return enabled; } };
+  // hauteur d'un personnage (pour placer barres de vie et chiffres au-dessus de sa tête)
+  const charHeight = (e) => { const c = e === 'player' ? playerChar : chars.get(e); return c ? c.size : HERO_H; };
+  return { render, project, enable, setStyle, resize, heightOf: charHeight, get charScale() { return 1; }, get enabled() { return enabled; } };
 }
