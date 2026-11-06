@@ -1,7 +1,7 @@
 /* RIFTWALKER — roguelike de donjons (V1 : le Guerrier)
    Tout le jeu tient dans ce fichier. Graphismes : 0x72 Dungeon Tileset II (CC0). */
 'use strict';
-const APP_VERSION = '1.8.0';
+const APP_VERSION = '1.9.0';
 
 // ============================================================
 // 1. OUTILS
@@ -680,6 +680,7 @@ function enterFloor(floorN, seed) {
   const s = D.start;
   G.p.x = (s.x + s.w / 2) * TILE; G.p.y = (s.y + s.h / 2) * TILE + 4;
   G.cam = { x: G.p.x, y: G.p.y };
+  G.p.spawnT = 0.9; G.cfx = []; G.kick = 0;
   // 3e personne : au début de l'étage, la caméra regarde vers une sortie de la salle
   const d0 = s.doors[0];
   if (d0) { const dx = d0.x * TILE + 8 - G.p.x, dy = d0.y * TILE + 8 - G.p.y, l = Math.hypot(dx, dy) || 1; G.p.fx = dx / l; G.p.fy = dy / l; camYaw = Math.atan2(dx, -dy); }
@@ -773,6 +774,7 @@ function explode(f, direct) {
   G.shake = Math.max(G.shake, 2.5);
   G.fx.push({ type: 'ring', x: f.x, y: f.y + 4, t: 0.25, T: 0.25, r0: 4, r1: 20, c: '#ffb84a' });
   G.fx.push({ type: 'flash', x: f.x, y: f.y, t: 0.15, T: 0.15 });
+  comicFx('burst', f.x, f.y - 4, { T: 0.35 }); comicFx('word', f.x, f.y - 22, { word: 'BOUM !', color: '#ff9a3a', T: 0.6 });
   for (let i = 0; i < 18; i++) { const a = rand(0, 6.28); G.parts.push({ x: f.x, y: f.y, vx: Math.cos(a) * rand(20, 90), vy: Math.sin(a) * rand(20, 90), life: rand(0.2, 0.5), c: pick(['#ffe07a', '#ff9a3a', '#ff5a2a', '#ffffff']), s: rand(1, 2) }); }
   for (const e of G.enemies) {
     if (e.dead || !e.active) continue;
@@ -805,6 +807,7 @@ function doBlink() {
   p.casting = 0; p.mana -= MAGE.blinkCost; p.cd.charge = p.cdMax.charge; p.inv = Math.max(p.inv, 0.3);
   if (Math.abs(dx) > 0.2) p.dir = dx > 0 ? 1 : -1;
   G.fx.push({ type: 'blink', x0: ox, y0: oy - 8, x1: p.x, y1: p.y - 8, t: 0.3, T: 0.3 });
+  comicFx('speed', p.x, p.y, { T: 0.3, color: '#e0c8ff' });
   for (const [x, y] of [[ox, oy], [p.x, p.y]]) for (let i = 0; i < 14; i++) G.parts.push({ x: x + rand(-5, 5), y: y - rand(0, 20), vx: rand(-25, 25), vy: rand(-40, 0), life: rand(0.3, 0.6), c: pick(['#c9a2ff', '#8a5aff', '#ffffff']), s: 1 });
   SFX.blink();
 }
@@ -817,6 +820,7 @@ function doNova() {
   G.fx.push({ type: 'ring', x: p.x, y: p.y, t: 0.5, T: 0.5, r0: 2, r1: 36, c: '#ffffff' });
   for (let i = 0; i < 30; i++) { const a = rand(0, 6.28); G.parts.push({ x: p.x, y: p.y - 4, vx: Math.cos(a) * rand(40, 120), vy: Math.sin(a) * rand(30, 80), life: rand(0.3, 0.6), c: pick(['#bdf0ff', '#ffffff', '#6ac8ff']), s: rand(1, 2) }); }
   SFX.nova();
+  comicFx('word', p.x, p.y - 30, { word: 'GLACE !', color: '#bdf0ff', T: 0.7 }); kick(0.6);
   let n = 0;
   for (const e of G.enemies) {
     if (e.dead || !e.active || dist(p, e) > 48 + e.r) continue;
@@ -833,7 +837,7 @@ function doAttack() {
   p.cd.attack = p.cdMax.attack;
   const t = nearestEnemy(42);
   if (t) face(p, t.x, t.y);
-  p.swing = 0.2;
+  p.swing = 0.2; p.swingN = (p.swingN || 0) + 1;
   SFX.swing();
   const ang = Math.atan2(p.fy, p.fx);
   G.fx.push({ type: 'arc', x: p.x, y: p.y - 6, ang, t: 0.16, T: 0.16, r: 19 });
@@ -859,11 +863,13 @@ function doCharge() {
   if (t) face(p, t.x, t.y);
   SFX.charge();
   G.shake = Math.max(G.shake, 2);
+  comicFx('speed', p.x, p.y, { T: 0.5 });
 }
 function doWhirl() {
   const p = G.p;
   if (p.cd.whirl > 0 || p.rage < 35 || p.charging > 0 || p.whirl > 0) { if (p.rage < 35 && p.cd.whirl <= 0) toast('Pas assez de rage', '#ff8a7a', 0.8); return; }
   p.rage -= 35; p.cd.whirl = p.cdMax.whirl; p.whirl = 0.45; p.whirlHit = new Set();
+  comicFx('speed', p.x, p.y, { T: 0.45 }); comicFx('word', p.x, p.y - 30, { word: 'SWOOSH !', color: '#ffe14a', T: 0.6 });
   SFX.whirl();
 }
 function doPotion() {
@@ -894,6 +900,13 @@ function damageEnemy(e, base, mult, opt = {}) {
   if (opt.label) floatText(e.x, e.y - sprH(e) - 14, opt.label, '#bdf0ff', 8);
   for (let i = 0; i < (crit ? 10 : 5); i++) G.parts.push({ x: e.x, y: e.y - 6, vx: Math.cos(a) * rand(20, 70) + rand(-20, 20), vy: Math.sin(a) * rand(20, 70) + rand(-30, 10), life: rand(0.15, 0.35), c: pick(['#ffffff', '#ffd27a', '#ff9a4a']), s: 1 });
   if (crit) { SFX.crit(); G.freeze = 0.06; G.shake = Math.max(G.shake, 3); } else SFX.hit();
+  if (COMIC()) {
+    // « hit-stop » : le jeu se fige une fraction de seconde pour donner du poids au coup
+    G.freeze = Math.max(G.freeze, crit ? 0.09 : 0.035); kick(crit ? 1 : 0.35);
+    const hy = e.y - sprH(e) * 0.6;
+    comicFx('spark', e.x, hy, { T: crit ? 0.3 : 0.2, big: crit, ang: a });
+    if (crit) comicFx('word', e.x + rand(-6, 6), hy - 10, { word: pick(opt.label ? WORDS.ice : WORDS.crit), color: opt.label ? '#bdf0ff' : '#ffe14a', T: 0.75 });
+  }
   if (e.hp <= 0) killEnemy(e);
 }
 const sprH = (e) => (e.d.elite ? 32 : e.kind === 'mimic' ? 14 : 18);
@@ -908,8 +921,13 @@ function killEnemy(e) {
   for (let i = 0; i < Math.min(coins, 8); i++) G.pickups.push({ type: 'coin', value: Math.ceil(coins / Math.min(coins, 8)), x: e.x, y: e.y, vx: rand(-50, 50), vy: rand(-50, 50), t: 0 });
   if (Math.random() < (e.d.elite ? 1 : 0.07)) G.pickups.push({ type: 'potion', x: e.x, y: e.y, vx: rand(-30, 30), vy: rand(-30, 30), t: 0 });
   if (e.d.elite) { G.shake = 6; G.freeze = 0.12; }
+  if (COMIC()) {
+    comicFx('burst', e.x, e.y - 8, { T: 0.4, big: e.d.elite });
+    comicFx('word', e.x, e.y - 26, { word: e.d.elite ? 'K.O. !' : pick(WORDS.kill), color: e.d.elite ? '#ff5a3a' : '#ffffff', T: 0.8, big: e.d.elite });
+    if (e.d.elite) { impactFrame(120); kick(1.8); G.freeze = 0.2; }
+  }
   const room = e.room;
-  if (room && room.enemies.every((x) => x.dead)) roomCleared(room);
+  if (room && room.enemies.every((x) => x.dead)) { if (COMIC() && !e.d.elite) { impactFrame(70); G.freeze = Math.max(G.freeze, 0.12); kick(1.2); } roomCleared(room); }
 }
 
 function hurtPlayer(dmg, from) {
@@ -919,6 +937,7 @@ function hurtPlayer(dmg, from) {
   gainRage(6);
   G.shake = Math.max(G.shake, 4);
   floatText(p.x, p.y - 22, '-' + dmg, '#ff4a3a', 9);
+  comicFx('hurt', p.x, p.y, { T: 0.4 }); kick(0.5);
   SFX.hurt();
   if (from) { const a = Math.atan2(p.y - from.y, p.x - from.x); p.kvx = Math.cos(a) * 110; p.kvy = Math.sin(a) * 110; }
   updateHUD();
@@ -939,7 +958,7 @@ function enterRoom(room) {
     if (blocked(G.p.x, G.p.y, G.p.r)) { const c = { x: (room.x + room.w / 2) * TILE, y: (room.y + room.h / 2) * TILE }; const a = Math.atan2(c.y - G.p.y, c.x - G.p.x); G.p.x += Math.cos(a) * 10; G.p.y += Math.sin(a) * 10; }
     SFX.lock();
     const elite = alive.find((e) => e.d.elite);
-    toast(elite ? `☠ ${elite.d.name} ☠` : 'La salle se verrouille !', elite ? '#ff6a5a' : '#ffb07a', 1.4);
+    if (elite) bossBanner(elite.d.name); else comicBanner('Salle verrouillée !', 'red');
     if (elite) { SFX.roar(); G.shake = 5; }
   } else if (!room.enemies.length) room.cleared = true;
   if (room.type === 'vault' && room.sealed) toast('Salle scellée', '#ffcf4a', 1);
@@ -950,7 +969,7 @@ function roomCleared(room) {
     room.locked = false; room.lockT = 0.3;
     for (const d of room.doors) if (G.barrier[d.y * MW + d.x] === 1) G.barrier[d.y * MW + d.x] = 0;
     SFX.unlock();
-    toast('Salle nettoyée', '#9affa0', 1.1);
+    comicBanner('Salle nettoyée !', 'green');
   }
   if (room.type === 'exit') {
     G.portal = { x: (room.x + room.w / 2) * TILE, y: (room.y + room.h / 2) * TILE + 6, t: 0 };
@@ -968,11 +987,12 @@ function openChest(c) {
     const e = spawnEnemy('mimic', c.x, c.y, room, hpM, dmM);
     e.active = true; e.cd = 0.25; e.state = 'windup'; e.t = 0.45;
     if (room) { room.cleared = false; room.locked = false; enterRoom(room); }
-    toast('Un mimic !', '#ff6a5a', 1.2);
+    comicBanner('Un mimic !', 'red'); comicFx('word', c.x, c.y - 20, { word: 'GRRAOU !', color: '#ff5a3a', T: 0.9, big: true }); impactFrame(70);
     G.shake = 5; SFX.hurt();
     return;
   }
   SFX.chest();
+  comicFx('rays', c.x, c.y - 8, { T: 1.1, color: c.big ? '#ffd36a' : '#fff0b0' });
   const coins = c.big ? randi(12, 20) : randi(4, 9);
   for (let i = 0; i < coins; i++) G.pickups.push({ type: 'coin', value: 1 + Math.floor(G.floorN / 2), x: c.x, y: c.y - 4, vx: rand(-60, 60), vy: rand(-40, 70), t: 0 });
   if (c.big || Math.random() < 0.35) G.pickups.push({ type: 'potion', x: c.x, y: c.y, vx: rand(-40, 40), vy: rand(20, 60), t: 0 });
@@ -984,9 +1004,9 @@ function openChest(c) {
 }
 function collect(k) {
   const p = G.p;
-  if (k.type === 'coin') { p.gold += k.value; SFX.coin(); updateHUD(); }
+  if (k.type === 'coin') { p.gold += k.value; SFX.coin(); updateHUD(); hudBump('goldText'); }
   if (k.type === 'potion') { if (p.potions >= 5) return false; p.potions++; toast('Potion de soin', '#ff6a6a', 1); SFX.pickup(); updateHUD(); }
-  if (k.type === 'key') { p.keys++; toast('Clé de la Faille obtenue !', '#ffcf4a', 1.6); SFX.key(); updateHUD(); }
+  if (k.type === 'key') { p.keys++; comicBanner('Clé de la Faille !', 'gold'); comicFx('rays', p.x, p.y - 10, { T: 1.2, color: '#ffd36a' }); SFX.key(); updateHUD(); hudBump('keyText'); }
   if (k.type === 'weapon') {
     const w = k.w, R = RARITY[w.rarity];
     if (w.dmg > p.weapon.dmg) {
@@ -998,6 +1018,8 @@ function collect(k) {
       toast(`<span style="color:${R.color}">[${w.name}]</span> ${w.dmg} dég.<br>moins bonne : vendue ${val} or`, '#fff', 2.2);
     }
     SFX.loot(w.rarity);
+    if (w.rarity >= 3) { comicFx('rays', p.x, p.y - 10, { T: 1.4, color: R.color, big: w.rarity >= 5 }); if (w.rarity >= 4) impactFrame(60); }
+    hudBump('frame');
     updateHUD();
   }
   return true;
@@ -1031,7 +1053,7 @@ function nextFloor() {
     enterFloor(G.floorN + 1, (Math.random() * 1e9) | 0);
     updateHUD(true);
     $('fade').classList.remove('on');
-    toast(`Étage ${G.floorN}`, '#c9a2ff', 1.8);
+    floorIntro(G.floorN);
     SFX.floor();
     state = 'play';
   }, 450);
@@ -1058,6 +1080,7 @@ function playerDeath() {
 // ============================================================
 function update(dt) {
   G.time += dt;
+  if (G.p.spawnT > 0) G.p.spawnT -= dt;
   const p = G.p;
   if (G.freeze > 0) { G.freeze -= dt; return; }
 
@@ -1671,9 +1694,196 @@ function drawEnemyHD(e) {
   return true;
 }
 
+// ============================================================
+// STYLE COMICS : effets « bande dessinée » des modes Cel-shading et 3e personne
+// (onomatopées, étincelles d'impact, lignes de vitesse, rayons de récompense, « impact frames »)
+// Tout est dessiné sur un calque transparent en pleine résolution, par-dessus la 3D.
+// ============================================================
+const COMIC = () => GFX === 'cel' || GFX === 'tps';
+const WORDS = { crit: ['CRAC !', 'KRAK !', 'BAM !', 'SHLAK !', 'TCHAK !'], kill: ['POW !', 'PAF !', 'PLOK !'], ice: ['BRISÉ !'] };
+function comicFx(type, x, y, o = {}) {
+  if (!G || !COMIC()) return;
+  G.cfx = G.cfx || [];
+  const T = o.T || 0.6;
+  G.cfx.push({ type, x, y, ...o, t: T, T, seed: Math.random(), rot: rand(-0.22, 0.22) });
+  if (G.cfx.length > 40) G.cfx.shift();
+}
+// « impact frame » : pendant 2-3 images, la scène passe en noir et blanc inversé, comme dans les animés
+function impactFrame(ms = 70) {
+  if (!COMIC()) return;
+  document.body.classList.add('impact');
+  clearTimeout(impactFrame.t); impactFrame.t = setTimeout(() => document.body.classList.remove('impact'), ms);
+}
+function kick(z) { if (G) G.kick = Math.max(G.kick || 0, z); }
+function hudBump(id) { const el = $(id); if (!el) return; el.classList.remove('bump'); void el.offsetWidth; el.classList.add('bump'); }
+
+// bandeaux façon case de BD (toutes les vues)
+function comicBanner(text, color = 'purple', secs = 1.3) {
+  const b = document.createElement('div');
+  b.className = 'cbanner ' + color; b.innerHTML = `<span>${text}</span>`;
+  document.body.appendChild(b);
+  setTimeout(() => b.remove(), secs * 1000 + 500);
+}
+function bossBanner(name) {
+  const b = document.createElement('div');
+  b.className = 'bossIntro'; b.innerHTML = `<div class="slash"></div><div class="lbl">Gardien</div><div class="nm">${name}</div>`;
+  document.body.appendChild(b);
+  setTimeout(() => b.remove(), 2300);
+}
+function floorIntro(n, sub) {
+  document.querySelectorAll('.floorIntro').forEach((e) => e.remove());
+  const b = document.createElement('div');
+  b.className = 'floorIntro';
+  b.innerHTML = `<div class="panel p1"></div><div class="panel p2"></div><div class="txt"><small>${sub || 'Plus profond…'}</small><b>Étage ${n}</b></div>`;
+  document.body.appendChild(b);
+  setTimeout(() => b.remove(), 2000);
+}
+
+let fxCv = null, fctx = null;
+function fxLayer(on) {
+  if (!fxCv) { fxCv = document.createElement('canvas'); fxCv.id = 'fxCanvas'; document.body.insertBefore(fxCv, $('hud')); fctx = fxCv.getContext('2d'); }
+  fxCv.style.display = on ? 'block' : 'none';
+  if (!on) return 0;
+  const d = Math.min(2, window.devicePixelRatio || 1);
+  const w = Math.round(window.innerWidth * d), h = Math.round(window.innerHeight * d);
+  if (fxCv.width !== w || fxCv.height !== h) { fxCv.width = w; fxCv.height = h; }
+  return d;
+}
+const INK = '#120818';
+function inkText(c, text, x, y, size, fill, rot = 0, scale = 1) {
+  c.save(); c.translate(x, y); c.rotate(rot); c.scale(scale, scale);
+  c.font = `${size}px Bangers, Impact, sans-serif`; c.textAlign = 'center'; c.textBaseline = 'middle';
+  c.lineJoin = 'round'; c.lineWidth = size * 0.28; c.strokeStyle = INK;
+  c.strokeText(text, size * 0.06, size * 0.08); // ombre décalée
+  c.strokeText(text, 0, 0);
+  c.fillStyle = fill; c.fillText(text, 0, 0);
+  c.restore();
+}
+function star(c, x, y, rOut, rIn, n, rot) {
+  c.beginPath();
+  for (let i = 0; i < n * 2; i++) { const r = i % 2 ? rIn : rOut, a = rot + i * Math.PI / n; c.lineTo(x + Math.cos(a) * r, y + Math.sin(a) * r); }
+  c.closePath();
+}
+const easeBack = (k) => { const s = 2.2; k -= 1; return k * k * ((s + 1) * k + s) + 1; };
+
+function renderComic(d) {
+  const p = G.p, c = fctx, W = fxCv.width, H = fxCv.height;
+  c.setTransform(1, 0, 0, 1, 0, 0); c.clearRect(0, 0, W, H);
+  const P = (x, y, h) => { const r = R3D.project(x, y, h); return [r[0] * d, r[1] * d, r[2]]; };
+  const cs = R3D.charScale;
+  // lignes de vitesse (en dessous du reste)
+  for (const f of G.cfx || []) {
+    if (f.type !== 'speed') continue;
+    const k = f.t / f.T, cx = W / 2, cy = H * 0.52, R = Math.hypot(W, H) * 0.55;
+    c.fillStyle = f.color || '#ffffff'; c.globalAlpha = Math.min(1, k * 2) * 0.75;
+    for (let i = 0; i < 46; i++) {
+      const a = Math.random() * Math.PI * 2, r0 = R * (0.55 + Math.random() * 0.25), w = 0.006 + Math.random() * 0.012;
+      c.beginPath(); c.moveTo(cx + Math.cos(a) * r0, cy + Math.sin(a) * r0);
+      c.lineTo(cx + Math.cos(a - w) * R * 1.1, cy + Math.sin(a - w) * R * 1.1); c.lineTo(cx + Math.cos(a + w) * R * 1.1, cy + Math.sin(a + w) * R * 1.1); c.fill();
+    }
+    c.globalAlpha = 1;
+  }
+  // rayons de récompense (coffres, butin rare)
+  for (const f of G.cfx || []) {
+    if (f.type !== 'rays') continue;
+    const [x, y, ok] = P(f.x, f.y, 0.5 * cs); if (!ok) continue;
+    const k = f.t / f.T, e = 1 - k, R = (f.big ? 150 : 90) * d * Math.min(1, e * 5);
+    c.save(); c.translate(x, y); c.rotate(G.time * 0.8 + f.seed * 6);
+    c.globalAlpha = Math.min(1, k * 2.5) * 0.55; c.fillStyle = f.color;
+    for (let i = 0; i < 12; i++) { c.rotate(Math.PI / 6); c.beginPath(); c.moveTo(0, 0); c.lineTo(R, -R * 0.12); c.lineTo(R, R * 0.12); c.fill(); }
+    c.globalAlpha = Math.min(1, k * 2.5); c.fillStyle = '#fff';
+    for (let i = 0; i < 4; i++) { const a = f.seed * 9 + i * 1.6 + e * 2, r = R * (0.35 + 0.4 * ((i * 0.37 + e) % 1)); star(c, Math.cos(a) * r, Math.sin(a) * r, 7 * d, 2.5 * d, 4, 0); c.fill(); }
+    c.restore();
+  }
+  // barres de vie des ennemis, signal d'attaque, étourdissement
+  for (const e of G.enemies) {
+    if (e.dead || !e.active) continue;
+    const look = { big_zombie: 1.9, ogre: 2, big_demon: 2.15, goblin: 0.8, imp: 0.8, tiny_zombie: 0.85 }[e.kind] || 1;
+    const [x, y, ok] = P(e.x, e.y, (e.kind === 'mimic' ? 0.7 : 1.3 * look) * cs);
+    if (!ok) continue;
+    if (e.hp < e.maxHp) {
+      const bw = (e.d.elite ? 64 : 34) * d, bh = 7 * d, bx = x - bw / 2, by = y - 10 * d, sk = 4 * d;
+      const para = (w) => { c.beginPath(); c.moveTo(bx + sk, by); c.lineTo(bx + w + sk, by); c.lineTo(bx + w, by + bh); c.lineTo(bx, by + bh); c.closePath(); };
+      c.fillStyle = INK; c.beginPath(); c.moveTo(bx + sk - 2 * d, by - 2 * d); c.lineTo(bx + bw + sk + 2 * d, by - 2 * d); c.lineTo(bx + bw + 2 * d, by + bh + 2 * d); c.lineTo(bx - 2 * d, by + bh + 2 * d); c.fill();
+      c.fillStyle = '#4a0c14'; para(bw); c.fill();
+      c.fillStyle = e.d.elite ? '#ff8a1a' : '#ff2a4a'; para(bw * Math.max(0, e.hp / e.maxHp)); c.fill();
+      c.fillStyle = 'rgba(255,255,255,.35)'; c.fillRect(bx + sk, by + d, bw * Math.max(0, e.hp / e.maxHp) - sk, 2 * d);
+    }
+    if ((e.state === 'windup' || e.state === 'slam') && !(e.frozen > 0)) {
+      const s = (1 + 0.15 * Math.sin(G.time * 30)) * d, by = y - 30 * d;
+      c.fillStyle = '#ffe14a'; c.strokeStyle = INK; c.lineWidth = 3 * d;
+      star(c, x, by, 17 * s, 11 * s, 9, G.time * 3); c.fill(); c.stroke();
+      inkText(c, '!', x, by + d, 22 * d, '#ff2a2a', 0, s / d);
+    }
+    if (e.stun > 0) for (let i = 0; i < 3; i++) { const a = G.time * 6 + i * 2.1; c.fillStyle = '#ffe14a'; c.strokeStyle = INK; c.lineWidth = 1.5 * d; star(c, x + Math.cos(a) * 14 * d, y - 22 * d + Math.sin(a) * 4 * d, 5 * d, 2 * d, 5, a); c.fill(); c.stroke(); }
+  }
+  // barre d'incantation
+  if (p.cls === 'mage' && p.casting > 0) {
+    const [x, y] = P(p.x, p.y, 1.75 * cs);
+    const kk = 1 - p.casting / p.castT, bw = 56 * d, bh = 8 * d, bx = x - bw / 2, by = y - 6 * d;
+    c.fillStyle = INK; c.fillRect(bx - 2 * d, by - 2 * d, bw + 4 * d, bh + 4 * d);
+    c.fillStyle = '#3a1a08'; c.fillRect(bx, by, bw, bh);
+    c.fillStyle = '#ffb02a'; c.fillRect(bx, by, bw * kk, bh);
+    c.fillStyle = '#fff3c0'; c.fillRect(bx, by, bw * kk, 2 * d);
+  }
+  // étincelles et explosions dessinées
+  for (const f of G.cfx || []) {
+    if (f.type !== 'spark' && f.type !== 'burst') continue;
+    const [x, y, ok] = P(f.x, f.y, 0.5 * cs); if (!ok) continue;
+    const k = f.t / f.T, e = 1 - k;
+    if (f.type === 'spark') {
+      const R = (f.big ? 46 : 26) * d * (0.5 + e * 0.8);
+      c.globalAlpha = Math.min(1, k * 3);
+      c.fillStyle = f.big ? '#ffe14a' : '#ffffff'; c.strokeStyle = INK; c.lineWidth = 3 * d;
+      star(c, x, y, R, R * 0.38, f.big ? 10 : 7, f.seed * 6); c.fill(); c.stroke();
+      if (f.big) { c.fillStyle = '#fff'; star(c, x, y, R * 0.5, R * 0.2, 10, f.seed * 6 + 0.3); c.fill(); }
+    } else {
+      const R = (f.big ? 90 : 46) * d * (0.4 + easeBack(Math.min(1, e * 2.2)) * 0.8);
+      c.globalAlpha = Math.min(1, k * 2.5);
+      c.fillStyle = '#ff7a1a'; c.strokeStyle = INK; c.lineWidth = 3.5 * d;
+      star(c, x, y, R, R * 0.68, 11, f.seed * 6); c.fill(); c.stroke();
+      c.fillStyle = '#ffe14a'; star(c, x, y, R * 0.7, R * 0.45, 11, f.seed * 6 + 0.25); c.fill();
+      c.fillStyle = '#fffbe0'; c.beginPath(); c.arc(x, y, R * 0.28, 0, 6.29); c.fill();
+    }
+    c.globalAlpha = 1;
+  }
+  // nombres de dégâts : gros chiffres encrés qui « claquent »
+  for (const tx of G.texts) {
+    const [x, y, ok] = P(tx.x, tx.y + 18, 1.3 * cs);
+    if (!ok) continue;
+    const k = tx.t / tx.T, e = 1 - k;
+    const pop = e < 0.15 ? 1.7 - (e / 0.15) * 0.7 : 1;
+    c.globalAlpha = Math.min(1, k * 3);
+    const rot = ((tx.x * 7.3) % 1 - 0.5) * 0.3;
+    inkText(c, tx.text, x, y, Math.round(tx.size * (tx.crit ? 3.2 : 2.6)) * d, tx.color, rot, pop);
+  }
+  c.globalAlpha = 1;
+  // onomatopées
+  for (const f of G.cfx || []) {
+    if (f.type !== 'word') continue;
+    const [x, y, ok] = P(f.x, f.y, 1.2 * cs); if (!ok) continue;
+    const k = f.t / f.T, e = 1 - k;
+    const s = e < 0.18 ? easeBack(e / 0.18) : 1 + (e - 0.18) * 0.15;
+    c.globalAlpha = k < 0.3 ? k / 0.3 : 1;
+    inkText(c, f.word, x, y - e * 18 * d, (f.big ? 54 : 34) * d, f.color, f.rot, Math.max(0.01, s));
+    c.globalAlpha = 1;
+  }
+  // coup reçu : bords rouges ; vie basse : pulsation
+  const hurt = (G.cfx || []).find((f) => f.type === 'hurt');
+  const low = p.hp / p.maxHp < 0.3 && state === 'play' ? 0.25 + 0.15 * Math.sin(G.time * 5) : 0;
+  const a = Math.max(hurt ? hurt.t / hurt.T : 0, low);
+  if (a > 0.01) {
+    const g = c.createRadialGradient(W / 2, H / 2, Math.min(W, H) * 0.32, W / 2, H / 2, Math.max(W, H) * 0.72);
+    g.addColorStop(0, 'rgba(200,0,30,0)'); g.addColorStop(1, `rgba(220,0,40,${a * 0.8})`);
+    c.fillStyle = g; c.fillRect(0, 0, W, H);
+  }
+}
+
 // En mode 3D, le canevas 2D ne dessine plus que les textes et barres par-dessus la scène
 function renderOverlay3D() {
   const p = G.p;
+  const d = fxLayer(COMIC());
+  if (d) { ctx.setTransform(1, 0, 0, 1, 0, 0); ctx.clearRect(0, 0, canvas.width, canvas.height); renderComic(d); return; }
   ctx.setTransform(1, 0, 0, 1, 0, 0);
   ctx.clearRect(0, 0, canvas.width, canvas.height);
   const k = canvas.width / window.innerWidth;
@@ -2148,11 +2358,11 @@ function drawPortraits() {
 function pause() { if (state !== 'play') return; state = 'pause'; input.attackHeld = false; input.mx = input.my = 0; showScreen('pause'); muffleMusic(true); }
 function resume() { showScreen(null); state = 'play'; last = performance.now(); muffleMusic(false); }
 function setupScreens() {
-  const begin = (cls) => { audioUnlock(); store.del('rw_run'); startRun(null, cls); refreshIcons(); toast(`${CLASSES[cls].name} · Étage 1`, '#c9a2ff', 1.6); };
+  const begin = (cls) => { audioUnlock(); store.del('rw_run'); startRun(null, cls); refreshIcons(); floorIntro(1, CLASSES[cls].name); };
   $('newBtn').onclick = () => { drawPortraits(); showScreen('classSel'); };
   document.querySelectorAll('.classCard').forEach((b) => { b.onclick = () => begin(b.dataset.cls); });
   $('classBack').onclick = showTitle;
-  $('continueBtn').onclick = () => { audioUnlock(); const r = store.get('rw_run', null); if (r) { startRun(r); refreshIcons(); toast(`Étage ${r.floor}`, '#c9a2ff', 1.6); } };
+  $('continueBtn').onclick = () => { audioUnlock(); const r = store.get('rw_run', null); if (r) { startRun(r); refreshIcons(); floorIntro(r.floor, CLASSES[r.cls || 'warrior'].name); } };
   $('helpBtn').onclick = () => showScreen('help');
   $('helpBack').onclick = () => showScreen('title');
   $('pauseBtn').addEventListener('pointerdown', (e) => { e.preventDefault(); pause(); });
@@ -2196,6 +2406,8 @@ function frame(now) {
     setMusic(r && r.locked ? (r.enemies.some((e) => !e.dead && e.d.elite) ? 'boss' : 'combat') : 'explore');
   }
   if (!G) { ctx.fillStyle = '#0b0712'; ctx.fillRect(0, 0, VW, VH); return; }
+  if (G.kick) G.kick = Math.max(0, G.kick - dt * 5);
+  if (G.cfx) { for (const c of G.cfx) c.t -= dt; G.cfx = G.cfx.filter((c) => c.t > 0); }
   if (state === 'play') { update(dt); hudFrame(); }
   else if (state === 'dead') { G.time += dt; for (const pt of G.parts) { pt.life -= dt; pt.x += pt.vx * dt; pt.y += pt.vy * dt; } }
   if (is3D(GFX) && R3D && R3D.enabled) { R3D.render(); renderOverlay3D(); }
@@ -2208,6 +2420,7 @@ async function setGfx(mode) {
   GFX = mode;
   if (is3D(mode) && !(await start3D())) { toast('Le mode 3D n’a pas pu démarrer sur cet appareil', '#ff8a7a', 2.5); mode = 'classic'; meta.gfx = 'classic'; saveMeta(); GFX = mode; }
   document.body.classList.toggle('tps', mode === 'tps');
+  document.body.classList.toggle('comic', mode === 'cel' || mode === 'tps');
   if (!is3D(mode)) stop3D(); else { R3D.setStyle(mode === 'hd3d' ? 'pixel' : 'cel'); R3D.resize(); }
   if (mode === 'tps' && G) { const p = G.p; camYaw = Math.atan2(p.fx, -p.fy); }
   resize();
@@ -2230,7 +2443,7 @@ async function start3D() {
     return true;
   } catch (e) { console.error(e); return false; }
 }
-function stop3D() { if (R3D) R3D.enable(false); document.body.classList.remove('cel'); }
+function stop3D() { if (R3D) R3D.enable(false); document.body.classList.remove('cel'); if (fxCv) fxLayer(false); }
 function canvas3d() { let c = document.getElementById('game3d'); if (!c) { c = document.createElement('canvas'); c.id = 'game3d'; document.body.insertBefore(c, canvas.nextSibling); } return c; }
 
 async function boot() {

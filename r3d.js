@@ -20,24 +20,85 @@ export async function create(canvas, api) {
   const camera = new THREE.PerspectiveCamera(38, 1, 0.5, 120);
 
   // --- ombrage « dessin animé » : 3 tons francs ---
-  const grad = new THREE.DataTexture(new Uint8Array([70, 70, 70, 255, 160, 160, 160, 255, 255, 255, 255, 255]), 3, 1, THREE.RGBAFormat);
+  const grad = new THREE.DataTexture(new Uint8Array([58, 58, 58, 255, 150, 150, 150, 255, 255, 255, 255, 255]), 3, 1, THREE.RGBAFormat);
   grad.minFilter = grad.magFilter = THREE.NearestFilter; grad.needsUpdate = true;
-  const toon = (src, opts = {}) => new THREE.MeshToonMaterial({
+
+  // =============================================================
+  // RENDU « COMICS » (modes Cel-shading et 3e personne)
+  // On complète le matériau dessin animé de Three.js avec quelques lignes de « shader »
+  // (petit programme exécuté par la carte graphique pour chaque pixel) :
+  //  1. texture peinte : de légers coups de pinceau dans la couleur des objets
+  //  2. ombres colorées : les zones sombres virent au violet-bleu au lieu du gris
+  //  3. trame de points dans les ombres, comme l'impression des BD
+  //  4. liseré lumineux sur le contour des personnages (ils ressortent du décor)
+  //  5. couleurs plus saturées et contrastées
+  // =============================================================
+  const COMIC = { uComic: { value: 1 }, uDot: { value: 6 }, uRim: { value: new THREE.Color(0xbfe6ff) } };
+  const COMIC_VERT_HEAD = 'varying vec3 vCWPos;\n';
+  const COMIC_VERT = `
+    vec4 cwp = vec4(transformed, 1.0);
+    #ifdef USE_INSTANCING
+      cwp = instanceMatrix * cwp;
+    #endif
+    vCWPos = (modelMatrix * cwp).xyz;`;
+  const COMIC_FRAG_HEAD = `varying vec3 vCWPos;
+    uniform float uComic; uniform float uDot; uniform vec3 uRim;
+    float cHash(vec2 p) { return fract(sin(dot(p, vec2(127.1, 311.7))) * 43758.5453); }
+    float cNoise(vec2 p) { vec2 i = floor(p), f = fract(p); f = f * f * (3.0 - 2.0 * f);
+      return mix(mix(cHash(i), cHash(i + vec2(1.0, 0.0)), f.x), mix(cHash(i + vec2(0.0, 1.0)), cHash(i + vec2(1.0, 1.0)), f.x), f.y); }
+  `;
+  const COMIC_PAINT = `
+    if (uComic > 0.5) {
+      vec2 q = vCWPos.xz + vCWPos.yy * vec2(0.7, -0.5);
+      float brush = cNoise(vec2(q.x * 3.0 + q.y * 1.5, q.y * 13.0 - q.x * 2.0)) * 0.65 + cNoise(q * 7.0) * 0.35;
+      diffuseColor.rgb *= 0.9 + brush * 0.2;
+    }`;
+  const COMIC_LIGHT = `
+    if (uComic > 0.5) {
+      vec3 cBase = diffuseColor.rgb;
+      float lb = max(dot(cBase, vec3(0.299, 0.587, 0.114)), 0.04);
+      float lit = clamp(dot(outgoingLight - totalEmissiveRadiance, vec3(0.299, 0.587, 0.114)) / lb, 0.0, 2.0);
+      float shade = 1.0 - smoothstep(0.22, 0.62, lit);
+      outgoingLight = mix(outgoingLight, outgoingLight * vec3(0.72, 0.66, 1.3) + cBase * vec3(0.015, 0.0, 0.05), shade);
+      vec2 g = mat2(0.7071, -0.7071, 0.7071, 0.7071) * (gl_FragCoord.xy / uDot);
+      float d = length(fract(g) - 0.5), rad = shade * 0.45;
+      outgoingLight *= 1.0 - (1.0 - smoothstep(rad - 0.07, rad + 0.03, d)) * 0.38 * step(0.02, shade);
+      #ifdef USE_SKINNING
+        float rim = 1.0 - max(dot(normal, normalize(vViewPosition)), 0.0);
+        outgoingLight += uRim * smoothstep(0.52, 0.7, rim) * (0.25 + 0.45 * lb);
+      #endif
+      // on sature surtout ce qui est déjà coloré : le métal gris reste du métal
+      float bSat = max(cBase.r, max(cBase.g, cBase.b)) - min(cBase.r, min(cBase.g, cBase.b));
+      float L = dot(outgoingLight, vec3(0.299, 0.587, 0.114));
+      outgoingLight = max(mix(vec3(L), outgoingLight, mix(0.9, 1.35, smoothstep(0.08, 0.35, bSat))), 0.0);
+    }`;
+  function comicify(m) {
+    m.onBeforeCompile = (sh) => {
+      Object.assign(sh.uniforms, COMIC);
+      sh.vertexShader = COMIC_VERT_HEAD + sh.vertexShader.replace('#include <project_vertex>', '#include <project_vertex>' + COMIC_VERT);
+      sh.fragmentShader = COMIC_FRAG_HEAD + sh.fragmentShader
+        .replace('#include <color_fragment>', '#include <color_fragment>' + COMIC_PAINT)
+        .replace('#include <opaque_fragment>', COMIC_LIGHT + '\n#include <opaque_fragment>');
+    };
+    m.customProgramCacheKey = () => 'comic';
+    return m;
+  }
+  const toon = (src, opts = {}) => comicify(new THREE.MeshToonMaterial({
     map: src && src.map ? src.map : null, color: src && src.color ? src.color.clone() : new THREE.Color(0xffffff), gradientMap: grad, ...opts,
-  });
+  }));
   // contour noir (technique de la « coque inversée »)
   const outlineMat = (w) => {
-    const m = new THREE.MeshBasicMaterial({ color: 0x0b0610, side: THREE.BackSide });
+    const m = new THREE.MeshBasicMaterial({ color: 0x0a0414, side: THREE.BackSide });
     m.onBeforeCompile = (sh) => {
       sh.uniforms.outlineW = { value: w };
       sh.vertexShader = 'uniform float outlineW;\n' + sh.vertexShader.replace('#include <skinning_vertex>', '#include <skinning_vertex>\n transformed += normalize( normal ) * outlineW;');
     };
     return m;
   };
-  const OUTLINE_CHAR = outlineMat(0.035), OUTLINE_PROP = outlineMat(0.025);
+  const OUTLINE_CHAR = outlineMat(0.05), OUTLINE_PROP = outlineMat(0.035), OUTLINE_ENV = outlineMat(0.05);
 
   // --- lumières ---
-  scene.add(new THREE.HemisphereLight(0x7a6aaa, 0x2a1a18, 0.85));
+  const hemi = new THREE.HemisphereLight(0x7a6aaa, 0x2a1a18, 0.85); scene.add(hemi);
   const moon = new THREE.DirectionalLight(0x8a90ff, 0.35); moon.position.set(-4, 10, 6); scene.add(moon);
   const playerLight = new THREE.PointLight(0xffc488, 11, 10, 1.3); scene.add(playerLight);
   const torchLights = Array.from({ length: 4 }, () => { const l = new THREE.PointLight(0xff8a3a, 0, 6, 1.6); scene.add(l); return l; });
@@ -147,6 +208,7 @@ export async function create(canvas, api) {
       im.instanceMatrix.needsUpdate = true;
       im.frustumCulled = false;
       group.add(im);
+      if (opts.outline) { const ol = new THREE.InstancedMesh(o.geometry, OUTLINE_ENV, mats.length); ol.instanceMatrix = im.instanceMatrix; ol.frustumCulled = false; group.add(ol); }
     });
   }
   const mat4 = (x, y, z, ry = 0, sx = 1, sy = 1, sz = 1) => new THREE.Matrix4().compose(new THREE.Vector3(x, y, z), new THREE.Quaternion().setFromEuler(new THREE.Euler(0, ry, 0)), new THREE.Vector3(sx, sy, sz));
@@ -234,13 +296,13 @@ export async function create(canvas, api) {
     instanced(hp('floor'), ceils, group, { color: 0x6a5048 });
     instanced(hp('floor'), ceilsLow, group, { color: 0x5a4440 });
     instanced(hp('wall'), walls, group);
-    instanced(hp('column'), cols, group);
-    instanced(hp('torch'), torchesM, group);
-    instanced(hp('banner'), banners, group);
+    instanced(hp('column'), cols, group, { outline: true });
+    instanced(hp('torch'), torchesM, group, { outline: true });
+    instanced(hp('banner'), banners, group, { outline: true });
     instanced(hp('cobweb'), webs, group);
-    instanced(hp('crate'), crates, group);
-    instanced(hp('barrel'), barrels, group);
-    instanced(hp('vase'), vases, group);
+    instanced(hp('crate'), crates, group, { outline: true });
+    instanced(hp('barrel'), barrels, group, { outline: true });
+    instanced(hp('vase'), vases, group, { outline: true });
     const box = new THREE.BoxGeometry(1, 1, 1);
     const beamIM = new THREE.InstancedMesh(box, toon(null, { color: new THREE.Color(0x4a2c1c) }), beams.length);
     beams.forEach((M, i) => beamIM.setMatrixAt(i, M)); beamIM.frustumCulled = false; group.add(beamIM);
@@ -252,7 +314,7 @@ export async function create(canvas, api) {
       const horiz = a.y === b.y;
       archs.push(M4((a.x + b.x) / 2 + 0.5, 0, (a.y + b.y) / 2 + 0.5, 0, horiz ? 0 : Math.PI / 2, 0.52, HC / 4, 0.4));
     }
-    instanced(hp('arch'), archs, group);
+    instanced(hp('arch'), archs, group, { outline: true });
     // lustres : couronne de fer, chaînes, bougies
     const iron = toon(null, { color: new THREE.Color(0x2a2226) }), wax = toon(null, { color: new THREE.Color(0xf0e2c0) });
     const flame = new THREE.MeshBasicMaterial({ color: 0xffd070 });
@@ -586,14 +648,23 @@ export async function create(canvas, api) {
     if (weapon === 'staff') attach(root, 'handslot.r', piece(props, 'staff'));
     if (kind === 'player' && cls !== 'mage') attach(root, 'handslot.l', piece(props, 'shield_badge_color'));
     const holder = new THREE.Group();
-    const s = size / 2.55 * CS(); root.scale.setScalar(s);
+    const s = size / 2.55 * CS(); root.scale.setScalar(s); root.userData.base = s;
     holder.add(root);
     const mixer = new THREE.AnimationMixer(root);
     const mats = []; root.traverse((o) => { if (o.isMesh && o.material.isMeshToonMaterial) mats.push(o.material); });
     const blob = new THREE.Mesh(new THREE.CircleGeometry(0.32 * size / 1.2 * CS(), 16), new THREE.MeshBasicMaterial({ color: 0, transparent: true, opacity: 0.35, depthWrite: false }));
     blob.rotation.x = -Math.PI / 2; blob.position.y = 0.02; holder.add(blob);
     scene.add(holder);
-    return { holder, root, mixer, mats, actions: {}, cur: null, isSkel, baseColors: mats.map((m) => m.color.clone()), dying: 0 };
+    return { base: root.userData.base, holder, root, mixer, mats, actions: {}, cur: null, isSkel, baseColors: mats.map((m) => m.color.clone()), dying: 0, sq: 0, sqv: 0, sqT: 0, lean: 0, idleT: 0, combo: 0 };
+  }
+  // SQUASH & STRETCH : un petit ressort écrase (valeur négative) ou étire (positive) le personnage,
+  // puis il revient à sa forme avec un léger rebond, comme en animation 2D
+  function squash(c, v) { c.sqv += v * 14; }
+  function springChar(c, dt, target = 0) {
+    const k = 260, damp = 15;
+    c.sqv += (-(c.sq - target) * k - c.sqv * damp) * dt; c.sq += c.sqv * dt;
+    const q = Math.max(-0.45, Math.min(0.45, c.sq));
+    c.root.scale.set(c.base * (1 - q * 0.55), c.base * (1 + q), c.base * (1 - q * 0.55));
   }
   function action(c, name, loop = true) {
     let a = c.actions[name];
@@ -674,6 +745,21 @@ export async function create(canvas, api) {
   // OBJETS : coffres, pièces, potions, clés, armes, projectiles, faille
   // =============================================================
   const objs = new Map();
+  // textures « dessinées à la main » pour les effets : croissant de coup d'épée, anneau à traits de vitesse
+  const fxTex = (draw) => { const c = document.createElement('canvas'); c.width = c.height = 256; draw(c.getContext('2d')); const t = new THREE.CanvasTexture(c); t.colorSpace = THREE.SRGBColorSpace; return t; };
+  const SLASH_TEX = fxTex((x) => {
+    const cr = (r0, r1, a0, a1) => { x.beginPath(); x.arc(128, 128, r1, a0, a1); x.arc(128 + (r1 - r0) * 0.5, 128, r0, a1, a0, true); x.closePath(); };
+    x.fillStyle = '#120818'; cr(70, 126, -1.25, 1.25); x.fill();
+    const g = x.createLinearGradient(0, 0, 256, 0); g.addColorStop(0.45, '#ff7a1a'); g.addColorStop(0.8, '#ffe14a'); g.addColorStop(1, '#fffbe8');
+    x.fillStyle = g; cr(80, 118, -1.15, 1.15); x.fill();
+    x.fillStyle = '#ffffff'; cr(100, 116, -0.95, 0.95); x.fill();
+  });
+  const RING_TEX = fxTex((x) => {
+    x.translate(128, 128);
+    for (let i = 0; i < 28; i++) { const a = i / 28 * Math.PI * 2 + Math.random() * 0.1, l = 0.5 + Math.random() * 0.5;
+      x.rotate(Math.PI * 2 / 28); x.fillStyle = '#ffffff'; x.beginPath(); x.moveTo(126, -3); x.lineTo(126, 3); x.lineTo(126 - 46 * l, 0); x.fill(); }
+    x.strokeStyle = '#ffffff'; x.lineWidth = 6; x.beginPath(); x.arc(0, 0, 122, 0, 6.29); x.stroke();
+  });
   const glowMat = (c, o = 1) => new THREE.MeshBasicMaterial({ color: c, transparent: o < 1, opacity: o, depthWrite: o >= 1, fog: false });
   function makeObj(kind, data) {
     if (PIX() && (kind === 'chest' || kind === 'coin' || kind === 'potion' || kind === 'key' || kind === 'weapon')) {
@@ -719,11 +805,14 @@ export async function create(canvas, api) {
       ring.rotation.x = disc.rotation.x = -Math.PI / 2; ring.position.y = 0.04; disc.position.y = 0.035; g.add(ring); g.add(disc);
       g.userData.disc = disc;
     } else if (kind === 'ring') {
-      const r = new THREE.Mesh(new THREE.RingGeometry(0.85, 1, 40), glowMat(new THREE.Color(data.c), 0.9)); r.rotation.x = -Math.PI / 2; r.position.y = 0.06; g.add(r);
-      g.userData.mat = r.material;
+      const m = new THREE.MeshBasicMaterial({ map: RING_TEX, color: new THREE.Color(data.c), transparent: true, depthWrite: false, fog: false, side: THREE.DoubleSide });
+      const r = new THREE.Mesh(new THREE.PlaneGeometry(2, 2), m); r.rotation.x = -Math.PI / 2; r.position.y = 0.06; g.add(r);
+      g.userData.mat = m;
     } else if (kind === 'arc') {
-      const a = new THREE.Mesh(new THREE.RingGeometry(0.75, 1.05, 24, 1, -1.2, 2.4), glowMat(0xffffff, 0.85)); a.rotation.x = -Math.PI / 2; a.position.y = 0.55; g.add(a);
-      g.userData.mat = a.material;
+      // croissant encré : blanc au cœur, jaune puis orange, contour noir
+      const m = new THREE.MeshBasicMaterial({ map: SLASH_TEX, transparent: true, depthWrite: false, fog: false, side: THREE.DoubleSide });
+      const a = new THREE.Mesh(new THREE.PlaneGeometry(2.3, 2.3), m); a.rotation.x = -Math.PI / 2; a.position.y = 0.45; g.add(a);
+      g.userData.mat = m; g.userData.arc = a;
     }
     scene.add(g);
     return g;
@@ -773,6 +862,11 @@ export async function create(canvas, api) {
     canvas.style.width = w + 'px'; canvas.style.height = h + 'px';
     camera.aspect = w / h;
     camInit = false;
+    // réglages du rendu comics : trame proportionnelle à la finesse de l'écran, lumière plus contrastée
+    COMIC.uComic.value = PIX() ? 0 : 1;
+    COMIC.uDot.value = 4.2 * renderer.getPixelRatio();
+    hemi.intensity = PIX() ? 0.85 : 0.62;
+    hemi.color.setHex(PIX() ? 0x7a6aaa : 0x8a74c8); hemi.groundColor.setHex(PIX() ? 0x2a1a18 : 0x3a1a20);
     scene.background = null;
     renderer.setClearColor(TPS() ? 0x0c0808 : 0x0a0514, 1);
     scene.fog.color.setHex(TPS() ? 0x140c0a : 0x0a0514);
@@ -815,21 +909,42 @@ export async function create(canvas, api) {
     pc.holder.position.set(W2(p.x), 0, W2(p.y));
     pc.holder.rotation.y = Math.atan2(p.fx, p.fy);
     pc.holder.visible = !(p.inv > 0 && p.hurtT <= 0 && p.charging <= 0 && Math.floor(t * 20) % 2);
+    // déclencheurs d'animation (le jeu donne l'état, on ajoute le « jeu d'acteur »)
+    const ev = pc.ev || (pc.ev = {});
+    if (p.swing > 0 && !(ev.swing > 0)) { pc.combo++; squash(pc, 0.22); }
+    if (p.hurtT > 0 && !(ev.hurt > 0)) { squash(pc, -0.3); pc.hitB = !pc.hitB; }
+    if (p.charging <= 0 && ev.charge > 0) squash(pc, -0.28);       // atterrissage de la Charge
+    if (p.charging > 0 && !(ev.charge > 0)) squash(pc, 0.3);        // départ : étirement
+    if (p.whirl > 0 && !(ev.whirl > 0)) squash(pc, -0.2);
+    if (p.castFx > 0.25 && !(ev.cast > 0.25)) squash(pc, 0.25);
+    ev.swing = p.swing; ev.hurt = p.hurtT; ev.charge = p.charging; ev.whirl = p.whirl; ev.cast = p.castFx;
+    const inFight = G.room && G.room.locked;
     if (api.getState() === 'dead' || p.hp <= 0) pose(pc, 'Death_A', Math.min(1, (pc.dying += dt) / 1.2));
     else {
       pc.dying = 0;
-      if (p.hurtT > 0) pose(pc, 'Hit_A', 1 - p.hurtT / 0.25);
+      pc.idleT = p.moving || p.swing > 0 || p.casting > 0 || inFight ? 0 : pc.idleT + dt;
+      if (p.spawnT > 0 && !p.moving) pose(pc, 'Spawn_Air', 1 - p.spawnT / 0.9);
+      else if (p.hurtT > 0) pose(pc, pc.hitB ? 'Hit_B' : 'Hit_A', 1 - p.hurtT / 0.25);
       else if (p.cls === 'mage') {
         if (p.casting > 0) play(pc, 'Ranged_Magic_Spellcasting', 1.3);
-        else if (p.castFx > 0) pose(pc, p.castFx > 0.22 ? 'Ranged_Magic_Raise' : 'Ranged_Magic_Shoot', 1 - p.castFx / 0.3);
-        else if (p.moving) play(pc, 'Running_A', 1.1); else play(pc, 'Idle_A');
+        else if (p.castFx > 0) pose(pc, p.castFx > 0.22 ? 'Ranged_Magic_Summon' : 'Ranged_Magic_Shoot', 1 - p.castFx / 0.3);
+        else if (p.moving) play(pc, 'Running_A', 1.1);
+        else play(pc, pc.idleT > 6 && pc.idleT % 9 < 3 ? 'Idle_B' : 'Idle_A');
       } else {
+        // trois coups qui s'enchaînent : diagonale, horizontale, estoc
+        const COMBO = ['Melee_1H_Attack_Slice_Diagonal', 'Melee_1H_Attack_Slice_Horizontal', 'Melee_1H_Attack_Stab'];
         if (p.whirl > 0) play(pc, 'Melee_2H_Attack_Spinning', 1.8);
-        else if (p.swing > 0) pose(pc, 'Melee_1H_Attack_Slice_Diagonal', 0.15 + (1 - p.swing / 0.2) * 0.7);
+        else if (p.swing > 0) pose(pc, COMBO[pc.combo % 3], 0.15 + (1 - p.swing / 0.2) * 0.7);
         else if (p.charging > 0) play(pc, 'Running_A', 2);
-        else if (p.moving) play(pc, 'Running_A', 1.1); else play(pc, 'Idle_A');
+        else if (p.moving) play(pc, 'Running_A', 1.1);
+        else play(pc, inFight ? 'Melee_2H_Idle' : pc.idleT > 6 && pc.idleT % 9 < 3 ? 'Idle_B' : 'Idle_A');
       }
     }
+    // inclinaison vers l'avant quand on accélère (et plus fort pendant la Charge)
+    const leanT = p.charging > 0 ? 0.32 : p.moving ? 0.12 : 0;
+    pc.lean += (leanT - pc.lean) * Math.min(1, dt * 10);
+    pc.root.rotation.x = pc.lean;
+    springChar(pc, dt, p.casting > 0 ? -0.05 : 0);
     setGlow(pc, p.hurtT > 0.15 ? 0xff2a2a : p.casting > 0 ? 0xff8a2a : 0x000000, p.hurtT > 0.15 ? 0.6 : p.casting > 0 ? 0.25 * (1 - p.casting / p.castT) : 0);
     pc.mixer.update(dt);
 
@@ -843,7 +958,16 @@ export async function create(canvas, api) {
       alive.add(e);
       c.holder.position.set(W2(e.x), e.dead ? -Math.max(0, c.dying - 1) * 0.8 : 0, W2(e.y));
       if (!e.dead && e.active) c.holder.rotation.y = Math.atan2(p.x - e.x, p.y - e.y);
+      const ev = c.ev || (c.ev = {});
+      if (e.flash > 0.1 && !(ev.flash > 0.1)) squash(c, e.dead ? 0.35 : -0.32);
+      if (ev.state === 'windup' && e.state !== 'windup') squash(c, 0.34);   // détente après l'anticipation
+      if (e.active && !ev.active && !e.d.elite) c.taunt = 0.9;
+      ev.flash = e.flash; ev.state = e.state; ev.active = e.active;
+      if (c.taunt > 0) c.taunt -= dt;
+      const wind = (e.state === 'windup' || e.state === 'slam') && !(e.frozen > 0) ? -0.16 : 0;
+      springChar(c, e.frozen > 0 ? 0 : dt, wind);
       if (e.dead) { c.dying += dt; pose(c, 'Skeletons_Death', Math.min(1, c.dying / 0.9)); }
+      else if (c.taunt > 0 && (e.state === 'chase' || !e.state) && !e.moving) pose(c, 'Skeletons_Taunt', 1 - c.taunt / 0.9);
       else if (e.frozen > 0) { if (c.cur) c.cur.paused = true; }
       else if (!e.active) play(c, 'Skeletons_Idle', 0.6);
       else if (e.state === 'windup' || e.state === 'slam') {
@@ -927,8 +1051,13 @@ export async function create(canvas, api) {
       }
       const k = f.t / f.T;
       if (f.type === 'ring') { const r = W2(f.r0 + (f.r1 - f.r0) * (1 - k)); o.position.set(W2(f.x), 0, W2(f.y)); o.scale.set(r, 1, r * 0.8); }
-      else { o.position.set(W2(f.x), 0, W2(f.y) + 0.35); o.rotation.y = -f.ang + Math.PI / 2; o.scale.setScalar(1.05); }
-      o.userData.mat.opacity = k * 0.9;
+      else {
+        // le croissant balaie l'espace : il grandit vite puis s'efface
+        o.position.set(W2(f.x), 0, W2(f.y) + 0.35); o.rotation.y = -f.ang; const e = 1 - k;
+        o.scale.setScalar((0.75 + Math.min(1, e * 3) * 0.35) * CS() * 1.4);
+        if (IN3P()) o.children[0].position.y = 0.3;
+      }
+      o.userData.mat.opacity = Math.min(1, k * 1.6);
     });
 
     // --- faille ---
@@ -1011,12 +1140,15 @@ export async function create(canvas, api) {
       camPos.lerp(tmpV.set(tx, up, tz), k); camLook.lerp(tmpV.set(lx, ly, lz), k);
       camera.position.set(camPos.x + (Math.random() - 0.5) * sh, camPos.y + (Math.random() - 0.5) * sh, camPos.z);
       camera.lookAt(camLook);
+      const fov0 = camera.aspect < 1 ? 78 : 62, fov = fov0 * (1 - (G.kick || 0) * 0.06);
+      if (Math.abs(camera.fov - fov) > 0.01) { camera.fov = fov; camera.updateProjectionMatrix(); }
       renderer.render(scene, camera);
       return;
     }
     camT.set(W2(G.cam.x), 0, W2(G.cam.y) + 0.4);
     const PITCH = PIX() ? PITCH_PIX : PITCH_CEL;
-    camera.position.set(camT.x + (Math.random() - 0.5) * sh, camT.y + Math.sin(PITCH) * camDist, camT.z + Math.cos(PITCH) * camDist + (Math.random() - 0.5) * sh);
+    const cd = camDist * (1 - (PIX() ? 0 : (G.kick || 0) * 0.05));
+    camera.position.set(camT.x + (Math.random() - 0.5) * sh, camT.y + Math.sin(PITCH) * cd, camT.z + Math.cos(PITCH) * cd + (Math.random() - 0.5) * sh);
     camera.lookAt(camT);
     renderer.render(scene, camera);
   }

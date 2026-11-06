@@ -13,6 +13,7 @@ Roguelike de donjons pour iPhone (site web jouable hors ligne).
 - Musique et bruitages synthétisés (thèmes menu, exploration, combat, gardien)
 - Cinq styles graphiques au choix (menu Graphismes) : Classique, Pixel HD, HD 2.5D, Cel-shading 3D, 3D à la 3ème personne
 - Décors hors zone de jeu (caverne, lave, gouffres, rochers)
+- Style « comics » : interface façon BD (cases, bandeaux, intro d'étage et de gardien) ; en 3D, rendu peint avec trames et ombres colorées, onomatopées, étincelles d'impact, lignes de vitesse, « impact frames », squash & stretch, combos animés
 - Vue 3ème personne : grandes salles de château (plafonds à poutres, colonnes, arches, lustres) et caméra par-dessus l'épaule
 
 ## Crédits
@@ -22,7 +23,7 @@ Roguelike de donjons pour iPhone (site web jouable hors ligne).
 - Décors du mode Pixel HD : LPC Tile Atlas (CC-BY-SA 3.0 / GPL 3.0), auteurs dans `CREDITS-LPC.txt`
 - Icônes des capacités : game-icons.net — Lorc, Delapouite (CC BY 3.0), retravaillées en pixel art
 - Moteur 3D : Three.js (licence MIT)
-- Police : Pixelify Sans (SIL Open Font License)
+- Polices : Pixelify Sans, Bangers, Nunito (SIL Open Font License)
 
 ## Publier une mise à jour
 Changer le même numéro de version à trois endroits : `APP_VERSION` dans `game.js`, `VERSION` dans `sw.js`, et `version.json` (avec une phrase de nouveautés). Les joueurs voient alors un bandeau « Nouvelle version » avec un bouton « Mettre à jour ».
