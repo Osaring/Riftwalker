@@ -1,4 +1,4 @@
 {
-  "version": "1.6.0",
-  "notes": "Styles 3D : les salles deviennent des îlots flottants au-dessus de la Faille"
+  "version": "1.7.0",
+  "notes": "Nouveau style : vue à la 3ème personne, avec de vrais murs"
 }

@@ -143,6 +143,8 @@ export async function create(canvas, api) {
   }
   const mat4 = (x, y, z, ry = 0, sx = 1, sy = 1, sz = 1) => new THREE.Matrix4().compose(new THREE.Vector3(x, y, z), new THREE.Quaternion().setFromEuler(new THREE.Euler(0, ry, 0)), new THREE.Vector3(sx, sy, sz));
 
+  const lvKey = (G) => G.D.seed + ':' + G.floorN + ':' + style + ':' + api.getCamMode();
+  const IN3P = () => api.getCamMode() === 'tps';
   function buildLevel(G) {
     if (level) { scene.remove(level.group); level.group.traverse((o) => { if (o.isInstancedMesh) o.dispose(); if (o.isMesh && o.material && o.material.map && o.material.map.isCanvasTexture) o.material.map.dispose(); }); }
     if (PIX()) return buildPixelLevel(G);
@@ -150,6 +152,7 @@ export async function create(canvas, api) {
     const isF = (x, y) => x >= 0 && y >= 0 && x < MW && y < MH && D.tiles[y * MW + x] === 1;
     const group = new THREE.Group();
     const K = 0.25; // pièces KayKit : 4 unités = 1 case
+    const WH = IN3P() ? K * 2.1 : K * 0.95, WL = IN3P() ? WH : K * 0.18;
     const floors = [], floorsB = [], floorsD = [], walls = [], wallsC = [], wallsLow = [], pillars = [], torches = [], rubble = [];
     let rnd = D.seed >>> 0;
     const R = () => ((rnd = (rnd * 1664525 + 1013904223) >>> 0) / 4294967296);
@@ -159,10 +162,10 @@ export async function create(canvas, api) {
       const M = mat4(x + 0.5, 0, y + 0.5, Math.floor(R() * 4) * Math.PI / 2, K, K, K);
       (r < 0.88 ? floors : r < 0.95 ? floorsB : floorsD).push(M);
       // murs autour de la case
-      if (!isF(x, y - 1)) (R() < 0.15 ? wallsC : walls).push(mat4(x + 0.5, 0, y - 0.06, 0, K * 1.02, K * 0.95, K));
-      if (!isF(x - 1, y)) walls.push(mat4(x - 0.06, 0, y + 0.5, Math.PI / 2, K * 1.02, K * 0.95, K));
-      if (!isF(x + 1, y)) walls.push(mat4(x + 1.06, 0, y + 0.5, -Math.PI / 2, K * 1.02, K * 0.95, K));
-      if (!isF(x, y + 1)) wallsLow.push(mat4(x + 0.5, 0, y + 1.06, Math.PI, K * 1.02, K * 0.18, K));
+      if (!isF(x, y - 1)) (R() < 0.15 ? wallsC : walls).push(mat4(x + 0.5, 0, y - 0.06, 0, K * 1.02, WH, K));
+      if (!isF(x - 1, y)) (R() < 0.1 ? wallsC : walls).push(mat4(x - 0.06, 0, y + 0.5, Math.PI / 2, K * 1.02, WH, K));
+      if (!isF(x + 1, y)) (R() < 0.1 ? wallsC : walls).push(mat4(x + 1.06, 0, y + 0.5, -Math.PI / 2, K * 1.02, WH, K));
+      if (!isF(x, y + 1)) wallsLow.push(mat4(x + 0.5, 0, y + 1.06, Math.PI, K * 1.02, WL, K));
     }
     // piliers aux angles des murs
     for (let y = 0; y <= MH; y++) for (let x = 0; x <= MW; x++) {
@@ -171,15 +174,27 @@ export async function create(canvas, api) {
       if (n > 0 && n < 4 && !((a && d && !b && !c) || (b && c && !a && !d)) && (n !== 2 || (a !== b && a !== c) || (a === b && c === d) || (a === c && b === d))) {
         const low = !(c || d) || (!c && !d) ? false : false;
         const southOnly = (a || b) && !c && !d;
-        pillars.push(mat4(x, 0, y, 0, K * 0.55, southOnly ? K * 0.18 : K * 0.95, K * 0.55));
+        pillars.push(mat4(x, 0, y, 0, K * 0.55, southOnly && !IN3P() ? K * 0.18 : WH, K * 0.55));
       }
     }
     for (const t of D.torches) torches.push(mat4(W2(t.x), 0.55, Math.floor(W2(t.y)) + 1.0, 0, 0.7, 0.7, 0.7));
     instanced(piece(dungeon, 'floor_tile_large'), floors, group);
     instanced(piece(dungeon, 'floor_tile_large'), floorsB, group, { color: 0xfaf6f2 });
     instanced(piece(dungeon, 'floor_tile_large'), floorsD, group, { color: 0xf4eee8 });
-    const isl = buildIslands(G, group, false);
-    instanced(piece(dungeon, 'torch_mounted'), isl.torchMats, group);
+    let isl = null;
+    if (IN3P()) {
+      // 3e personne : on est DANS le donjon, avec de vrais murs tout autour
+      instanced(piece(dungeon, 'wall'), walls, group);
+      instanced(piece(dungeon, 'wall_cracked'), wallsC, group);
+      instanced(piece(dungeon, 'wall'), wallsLow, group);
+      instanced(piece(dungeon, 'pillar'), pillars, group);
+      instanced(piece(dungeon, 'torch_mounted'), torches.map((M) => M.clone().setPosition(new THREE.Vector3().setFromMatrixPosition(M).setY(1.0))), group);
+      const ground = new THREE.Mesh(new THREE.PlaneGeometry(MW + 40, MH + 40), toon(null, { color: new THREE.Color(0x1a1218) }));
+      ground.rotation.x = -Math.PI / 2; ground.position.set(MW / 2, -0.03, MH / 2); group.add(ground);
+    } else {
+      isl = buildIslands(G, group, false);
+      instanced(piece(dungeon, 'torch_mounted'), isl.torchMats, group);
+    }
     // crânes et tonneaux
     const skulls = [], barrels = [];
     for (const pr of D.props) (pr.s === 'skull' ? skulls : barrels).push(mat4(pr.x + 0.5, 0, pr.y + 0.5, R() * 6.28, pr.s === 'skull' ? 0.6 : 0.42, pr.s === 'skull' ? 0.6 : 0.42, pr.s === 'skull' ? 0.6 : 0.42));
@@ -187,7 +202,7 @@ export async function create(canvas, api) {
 
     instanced(piece(props, 'barrel'), barrels, group);
     scene.add(group);
-    level = { group, isl, torches: isl.torchLights, doors: new Map(), lava: [] };
+    level = { group, isl, torches: isl ? isl.torchLights : D.torches.map((t) => new THREE.Vector3(W2(t.x), 1.5, Math.floor(W2(t.y)) + 1.3)), doors: new Map(), lava: [] };
     // herses (piques) et portes scellées sur chaque passage de salle
     for (const room of D.rooms) for (const d of room.doors) {
       const key = d.x + ',' + d.y;
@@ -196,10 +211,10 @@ export async function create(canvas, api) {
       const sp = toonify(piece(props, 'spikes').clone(), { outline: OUTLINE_PROP });
       sp.scale.setScalar(0.55); sp.position.set(d.x + 0.5, -0.7, d.y + 0.5); group.add(sp);
       const gate = toonify(piece(dungeon, 'wall_gated').clone(), { tint: 0xffd36a });
-      gate.scale.set(K, K * 0.95, K * 0.6); gate.position.set(d.x + 0.5, 0, d.y + 0.5); gate.rotation.y = vertical ? 0 : Math.PI / 2; gate.visible = false; group.add(gate);
+      gate.scale.set(K, WH, K * 0.6); gate.position.set(d.x + 0.5, 0, d.y + 0.5); gate.rotation.y = vertical ? 0 : Math.PI / 2; gate.visible = false; group.add(gate);
       level.doors.set(key, { x: d.x, y: d.y, sp, gate, h: -0.7 });
     }
-    levelKey = D.seed + ':' + G.floorN + ':' + style;
+    levelKey = lvKey(G);
   }
 
   // =============================================================
@@ -394,7 +409,7 @@ export async function create(canvas, api) {
       gate.scale.set(0.25, 0.25 * 0.95, 0.15); gate.position.set(d.x + 0.5, 0, d.y + 0.5); gate.rotation.y = vertical ? 0 : Math.PI / 2; gate.visible = false; group.add(gate);
       level.doors.set(key, { x: d.x, y: d.y, spBill: b, gate, h: -0.7 });
     }
-    levelKey = D.seed + ':' + G.floorN + ':' + style;
+    levelKey = lvKey(G);
   }
 
   // =============================================================
@@ -590,11 +605,33 @@ export async function create(canvas, api) {
   const camT = new THREE.Vector3();
   const PITCH_CEL = 50 * Math.PI / 180, PITCH_PIX = 44 * Math.PI / 180;
   let camDist = 14;
+  const TPS = () => api.getCamMode() === 'tps';
+  const camPos = new THREE.Vector3(), camLook = new THREE.Vector3();
+  let camInit = false;
+  // ciel de la Faille (vue 3ème personne) : dégradé violet avec quelques étoiles
+  const skyTex = (() => {
+    const c = document.createElement('canvas'); c.width = 4; c.height = 256;
+    const x = c.getContext('2d'), g = x.createLinearGradient(0, 0, 0, 256);
+    g.addColorStop(0, '#06030c'); g.addColorStop(0.45, '#1c0b33'); g.addColorStop(0.7, '#3a1660'); g.addColorStop(1, '#0a0514');
+    x.fillStyle = g; x.fillRect(0, 0, 4, 256);
+    const t = new THREE.CanvasTexture(c); t.colorSpace = THREE.SRGBColorSpace; return t;
+  })();
   function resize() {
     const w = window.innerWidth, h = window.innerHeight;
     renderer.setSize(w, h, false);
     canvas.style.width = w + 'px'; canvas.style.height = h + 'px';
     camera.aspect = w / h;
+    camInit = false;
+    scene.background = TPS() ? skyTex : null;
+    scene.fog.color.setHex(TPS() ? 0x241040 : 0x0a0514);
+    if (TPS()) {
+      // vue à la 3ème personne : grand angle, le brouillard cache le lointain
+      camera.fov = camera.aspect < 1 ? 70 : 55;
+      scene.fog.near = 7; scene.fog.far = 22;
+      camera.updateProjectionMatrix();
+      return;
+    }
+    camera.fov = 38;
     const tanH = Math.tan(THREE.MathUtils.degToRad(camera.fov / 2));
     camDist = camera.aspect < 1 ? 3.9 / (tanH * camera.aspect) : 3.5 / tanH;
     scene.fog.near = camDist * 0.9; scene.fog.far = camDist * 1.9;
@@ -613,7 +650,7 @@ export async function create(canvas, api) {
     const now = performance.now();
     const dt = Math.min(0.05, (now - clock.last) / 1000); clock.last = now;
     const t = G.time;
-    if (G.D.seed + ':' + G.floorN + ':' + style !== levelKey) buildLevel(G);
+    if (lvKey(G) !== levelKey) buildLevel(G);
 
     const p = G.p;
     if (PIX()) pixelChars(G, t);
@@ -790,8 +827,31 @@ export async function create(canvas, api) {
     if (level.isl) animIslands(level.isl, t);
     riftLight.intensity = PIX() ? 2.2 : 0.9; riftLight2.intensity = PIX() ? 0.8 : 0.4;
     // --- caméra ---
-    camT.set(W2(G.cam.x), 0, W2(G.cam.y) + 0.4);
     const sh = G.shake * 0.012;
+    if (TPS()) {
+      // caméra derrière l'épaule du héros, orientée selon l'angle choisi par le joueur
+      const yaw = api.getYaw(), fx = Math.sin(yaw), fz = -Math.cos(yaw);
+      const px = W2(p.x), pz = W2(p.y);
+      let back = camera.aspect < 1 ? 4.6 : 4.0, up = camera.aspect < 1 ? 3.1 : 2.5;
+      // si un mur se trouve entre le héros et la caméra, on la rapproche (et on la baisse un peu)
+      for (let k = 0.4; k <= back; k += 0.1) {
+        const cx = Math.floor(px - fx * k), cz = Math.floor(pz - fz * k);
+        if (cx < 0 || cz < 0 || cx >= G.MW || cz >= G.MH || G.D.tiles[cz * G.MW + cx] !== 1) {
+          // mur derrière : la caméra recule moins mais monte, pour regarder par-dessus le mur
+          const nb = Math.max(0.6, k - 0.3); up += (back - nb) * 0.55; back = nb; break;
+        }
+      }
+      const tx = px - fx * back, tz = pz - fz * back;
+      const lx = px + fx * 2.2, lz = pz + fz * 2.2;
+      if (!camInit) { camPos.set(tx, up, tz); camLook.set(lx, 0.7, lz); camInit = true; }
+      const k = 1 - Math.pow(0.0005, dt);
+      camPos.lerp(tmpV.set(tx, up, tz), k); camLook.lerp(tmpV.set(lx, 0.7, lz), Math.min(1, k * 1.5));
+      camera.position.set(camPos.x + (Math.random() - 0.5) * sh, camPos.y + (Math.random() - 0.5) * sh, camPos.z);
+      camera.lookAt(camLook);
+      renderer.render(scene, camera);
+      return;
+    }
+    camT.set(W2(G.cam.x), 0, W2(G.cam.y) + 0.4);
     const PITCH = PIX() ? PITCH_PIX : PITCH_CEL;
     camera.position.set(camT.x + (Math.random() - 0.5) * sh, camT.y + Math.sin(PITCH) * camDist, camT.z + Math.cos(PITCH) * camDist + (Math.random() - 0.5) * sh);
     camera.lookAt(camT);
@@ -808,5 +868,5 @@ export async function create(canvas, api) {
     canvas.style.display = on ? 'block' : 'none';
     if (on) { resize(); clock.last = performance.now(); }
   }
-  return { render, project, enable, setStyle, get enabled() { return enabled; } };
+  return { render, project, enable, setStyle, resize, get enabled() { return enabled; } };
 }

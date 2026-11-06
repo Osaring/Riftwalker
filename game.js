@@ -1,7 +1,7 @@
 /* RIFTWALKER — roguelike de donjons (V1 : le Guerrier)
    Tout le jeu tient dans ce fichier. Graphismes : 0x72 Dungeon Tileset II (CC0). */
 'use strict';
-const APP_VERSION = '1.6.0';
+const APP_VERSION = '1.7.0';
 
 // ============================================================
 // 1. OUTILS
@@ -605,6 +605,14 @@ function tryGenerate(floorN, seed, force) {
 let G = null;          // partie en cours
 let state = 'loading'; // loading | title | play | pause | dead | trans
 const input = { mx: 0, my: 0, keys: {}, attackHeld: false };
+// angle de la caméra en vue 3ème personne (0 = on regarde vers le haut de la carte)
+let camYaw = 0, camManualT = 0;
+// en 3ème personne, « haut » sur le joystick = droit devant la caméra
+function toWorld(jx, jy) {
+  if (GFX !== 'tps') return [jx, jy];
+  const c = Math.cos(camYaw), s = Math.sin(camYaw);
+  return [jx * c - jy * s, jx * s + jy * c];
+}
 
 const CLASSES = {
   warrior: { name: 'Guerrier', sprite: 'knight_m', hp: 100, weapon: { sprite: 'weapon_regular_sword', name: 'Épée de recrue', rarity: 1, dmg: 10 } },
@@ -778,8 +786,9 @@ function doBlink() {
   if (p.cd.charge > 0) return;
   if (p.mana < MAGE.blinkCost) { toast('Pas assez de mana', '#7ab8ff', 0.9); return; }
   let dx, dy;
-  const ml = Math.hypot(input.mx, input.my);
-  if (ml > 0.2) { dx = input.mx / ml; dy = input.my / ml; }
+  const [wx, wy] = toWorld(input.mx, input.my);
+  const ml = Math.hypot(wx, wy);
+  if (ml > 0.2) { dx = wx / ml; dy = wy / ml; }
   else {
     const t = nearestEnemy(90);
     if (t) { const a = Math.atan2(p.y - t.y, p.x - t.x); dx = Math.cos(a); dy = Math.sin(a); } else { dx = p.fx; dy = p.fy; }
@@ -1060,7 +1069,18 @@ function update(dt) {
   if (k.ArrowRight || k.KeyD) mx = 1;
   if (k.ArrowUp || k.KeyW || k.KeyZ) my = -1;
   if (k.ArrowDown || k.KeyS) my = 1;
+  const jx = mx, jy = my;
+  [mx, my] = toWorld(mx, my);
   const ml = Math.hypot(mx, my);
+  // 3e personne : quand on avance, la caméra se replace doucement derrière le héros
+  if (GFX === 'tps') {
+    camManualT = Math.max(0, camManualT - dt);
+    if (ml > 0.3 && jy < -0.3 && Math.abs(jx) < Math.abs(jy) * 1.7 && camManualT <= 0) {
+      let d = Math.atan2(mx, -my) - camYaw;
+      while (d > Math.PI) d -= 2 * Math.PI; while (d < -Math.PI) d += 2 * Math.PI;
+      camYaw += d * Math.min(1, dt * 1.4);
+    }
+  }
   if (ml > 1) { mx /= ml; my /= ml; }
   p.moving = ml > 0.1;
   if (p.cls === 'mage') {
@@ -2051,6 +2071,13 @@ function setupControls() {
     if (m < 0.18) { input.mx = input.my = 0; } else { input.mx = dx / R; input.my = dy / R; }
   });
   const end = (e) => { if (e.pointerId !== sid) return; sid = null; input.mx = input.my = 0; base.classList.remove('on'); };
+  // 3ème personne : glisser le doigt à droite de l'écran fait tourner la caméra
+  const cz = $('camZone');
+  let cid = null, clx = 0;
+  cz.addEventListener('pointerdown', (e) => { audioUnlock(); if (cid !== null) return; cid = e.pointerId; clx = e.clientX; cz.setPointerCapture(e.pointerId); e.preventDefault(); });
+  cz.addEventListener('pointermove', (e) => { if (e.pointerId !== cid) return; camYaw += (e.clientX - clx) * 0.009; clx = e.clientX; camManualT = 2.5; });
+  const cend = (e) => { if (e.pointerId === cid) cid = null; };
+  cz.addEventListener('pointerup', cend); cz.addEventListener('pointercancel', cend);
   zone.addEventListener('pointerup', end); zone.addEventListener('pointercancel', end);
 
   const bind = (id, fn, hold) => {
@@ -2135,11 +2162,11 @@ function setupScreens() {
     document.querySelectorAll('.sfxBtn').forEach((b) => { b.textContent = 'Effets : ' + (meta.sound ? 'oui' : 'non'); });
   };
   sl();
-  const GFX_NAMES = { classic: 'Classique', hd: 'Pixel HD', hd3d: 'HD 2.5D', cel: 'Cel-shading 3D' };
+  const GFX_NAMES = { classic: 'Classique', hd: 'Pixel HD', hd3d: 'HD 2.5D', cel: 'Cel-shading 3D', tps: '3D 3ème personne' };
   const gl = () => document.querySelectorAll('.gfxBtn').forEach((b) => { b.textContent = 'Graphismes : ' + GFX_NAMES[meta.gfx]; });
   gl();
   document.querySelectorAll('.gfxBtn').forEach((b) => { b.onclick = async () => {
-    const order = ['classic', 'hd', 'hd3d', 'cel'];
+    const order = ['classic', 'hd', 'hd3d', 'cel', 'tps'];
     meta.gfx = order[(order.indexOf(meta.gfx) + 1) % order.length]; saveMeta(); gl();
     await setGfx(meta.gfx);
   }; });
@@ -2176,11 +2203,13 @@ function frame(now) {
   if (state === 'play' && Math.floor(G.time) !== hudCache.sec) { hudCache.sec = Math.floor(G.time); updateHUD(); }
 }
 
-const is3D = (m) => m === 'cel' || m === 'hd3d';
+const is3D = (m) => m === 'cel' || m === 'hd3d' || m === 'tps';
 async function setGfx(mode) {
   GFX = mode;
   if (is3D(mode) && !(await start3D())) { toast('Le mode 3D n’a pas pu démarrer sur cet appareil', '#ff8a7a', 2.5); mode = 'classic'; meta.gfx = 'classic'; saveMeta(); GFX = mode; }
-  if (!is3D(mode)) stop3D(); else R3D.setStyle(mode === 'hd3d' ? 'pixel' : 'cel');
+  document.body.classList.toggle('tps', mode === 'tps');
+  if (!is3D(mode)) stop3D(); else { R3D.setStyle(mode === 'hd3d' ? 'pixel' : 'cel'); R3D.resize(); }
+  if (mode === 'tps' && G) { const p = G.p; camYaw = Math.atan2(p.fx, -p.fy); }
   resize();
   if (G && !is3D(mode)) prerenderMap();
   refreshIcons();
@@ -2191,6 +2220,7 @@ async function start3D() {
   try {
     if (!R3D) { toast('Chargement de la 3D…', '#c9a2ff', 4); const m = await import('./r3d.js'); R3D = await m.create(canvas3d(), {
       getGame: () => G, getState: () => state, getStyle: () => (GFX === 'hd3d' ? 'pixel' : 'cel'),
+      getCamMode: () => (GFX === 'tps' ? 'tps' : 'top'), getYaw: () => camYaw,
       groundCanvas, playerKey: () => playerHDKey(G.p), enemyKey: enemyHDKey,
       get HDS() { return HDS; }, get SPR() { return SPR; }, get ENV() { return ENV; },
       get hdImg() { return hdImg; }, get envImg() { return envImg; }, get atlas2x() { return TWIN.get(atlas); },

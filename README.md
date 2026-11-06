@@ -11,7 +11,7 @@ Roguelike de donjons pour iPhone (site web jouable hors ligne).
 - Butin aux couleurs de rareté façon WoW
 - Sauvegarde automatique à chaque étage, jouable hors ligne
 - Musique et bruitages synthétisés (thèmes menu, exploration, combat, gardien)
-- Quatre styles graphiques au choix (menu Graphismes) : Classique, Pixel HD, HD 2.5D, Cel-shading 3D
+- Cinq styles graphiques au choix (menu Graphismes) : Classique, Pixel HD, HD 2.5D, Cel-shading 3D, 3D à la 3ème personne
 - Décors hors zone de jeu (caverne, lave, gouffres, rochers)
 
 ## Crédits

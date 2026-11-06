@@ -114,3 +114,6 @@ body.cel canvas#game { z-index: 1; image-rendering: auto; }
 /* les images du jeu ne doivent jamais capter les doigts : les commandes sont au-dessus */
 canvas#game, canvas#game3d { pointer-events: none; }
 #hud { z-index: 5; }
+
+#camZone { position: absolute; right: 0; top: calc(130px + env(safe-area-inset-top)); width: 45%; bottom: 0; pointer-events: auto; display: none; }
+body.tps #camZone { display: block; }
