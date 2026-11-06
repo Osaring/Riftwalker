@@ -72,17 +72,20 @@ export async function create(canvas, api) {
     return { g, inner, mesh, mat, tex, img, key: '' };
   }
   // r = [x, y, largeur, hauteur, décalage x depuis les pieds, décalage y depuis les pieds] en pixels HD (32 px = 1 case)
+  // Les images restent verticales (elles ne « plongent » pas dans les murs) ; on les étire un peu en hauteur
+  // pour compenser l'inclinaison de la caméra et garder les bonnes proportions à l'écran.
+  const VSTRETCH = 1 / Math.cos(44 * Math.PI / 180);
   function setFrame(b, r, sc = 1) {
     const W = b.img.width, H = b.img.height, k = sc / 32;
     b.tex.repeat.set(r[2] / W, r[3] / H);
     b.tex.offset.set(r[0] / W, 1 - (r[1] + r[3]) / H);
-    b.mesh.scale.set(r[2] * k, r[3] * k, 1);
-    b.mesh.position.set((r[4] + r[2] / 2) * k, -(r[5] + r[3] / 2) * k, 0);
+    b.mesh.scale.set(r[2] * k, r[3] * k * VSTRETCH, 1);
+    b.mesh.position.set((r[4] + r[2] / 2) * k, -(r[5] + r[3] / 2) * k * VSTRETCH, 0);
   }
   function frameHD(b, key, sc = 1) { const r = api.HDS[key]; if (!r) return false; if (b.key !== key + sc) { setFrame(b, r, sc); b.key = key + sc; } return true; }
   function frameSpr(b, name, sc = 1) { const r0 = api.SPR[name]; if (!r0) return; const k = name + sc; if (b.key === k) return; setFrame(b, [r0[0] * 2, r0[1] * 2, r0[2] * 2, r0[3] * 2, -r0[2], -r0[3] * 2], sc); b.key = k; }
   function frameEnv(b, name, sc = 1) { const r0 = api.ENV[name]; if (!r0) return; const k = name + sc; if (b.key === k) return; setFrame(b, [r0[0], r0[1], r0[2], r0[3], -r0[2] / 2, -r0[3]], sc); b.key = k; }
-  const face = (b) => b.inner.quaternion.copy(camera.quaternion);
+  const face = () => {};
   const removeBill = (b) => { scene.remove(b.g); b.mat.dispose(); };
 
   // --- chargement des modèles ---
@@ -238,7 +241,8 @@ export async function create(canvas, api) {
     const group = new THREE.Group();
     const canvasTex = (cv) => { const t = new THREE.CanvasTexture(cv); t.magFilter = t.minFilter = THREE.NearestFilter; t.generateMipmaps = false; t.colorSpace = THREE.SRGBColorSpace; return t; };
     const plane = (cv, y, alpha) => {
-      const m = new THREE.Mesh(new THREE.PlaneGeometry(MW, MH), new THREE.MeshLambertMaterial({ map: canvasTex(cv), alphaTest: alpha ? 0.5 : 0 }));
+      const mat = alpha ? new THREE.MeshLambertMaterial({ map: canvasTex(cv), alphaTest: 0.5 }) : new THREE.MeshBasicMaterial({ map: canvasTex(cv), color: 0xb0a0b8 });
+      const m = new THREE.Mesh(new THREE.PlaneGeometry(MW, MH), mat);
       m.rotation.x = -Math.PI / 2; m.position.set(MW / 2, y, MH / 2); group.add(m);
     };
     plane(api.groundCanvas('outside'), -0.75, false);
@@ -250,16 +254,26 @@ export async function create(canvas, api) {
       if (dark) { x.fillStyle = `rgba(10,6,16,${dark})`; x.fillRect(0, 0, 32, 32); }
       return canvasTex(c);
     };
-    const side = new THREE.MeshLambertMaterial({ map: crop('wface_1') });
-    const front = new THREE.MeshLambertMaterial({ map: crop('wbase_1') });
-    const top = new THREE.MeshLambertMaterial({ map: crop('floor_1_1', 0.55) });
+    const draw = (w, h, fn) => { const c = document.createElement('canvas'); c.width = w; c.height = h; const x = c.getContext('2d'); x.imageSmoothingEnabled = false; fn(x); return canvasTex(c); };
+    const E = (x, name, dx, dy) => { const r = api.ENV[name]; x.drawImage(api.envImg, r[0], r[1], r[2], r[3], dx, dy, r[2], r[3]); };
+    // face du mur : 1,5 case de haut (pierre + base)
+    const frontTex = draw(32, 48, (x) => { E(x, 'wface_1', 0, 0); E(x, 'wbase_1', 0, 16); });
+    const sideTex = draw(32, 48, (x) => { E(x, 'wface_1', 0, 0); E(x, 'wface_1', 0, 24); x.fillStyle = 'rgba(10,6,16,.35)'; x.fillRect(0, 0, 32, 48); });
+    // dessus du mur : pierre sombre avec un liseré clair (on voit tout de suite que c'est un mur)
+    const topTex = draw(32, 32, (x) => {
+      E(x, 'rock_1_1', 0, 0); x.fillStyle = 'rgba(20,14,26,.45)'; x.fillRect(0, 0, 32, 32);
+      x.fillStyle = 'rgba(157,147,163,.35)'; x.fillRect(0, 0, 32, 1);
+    });
+    const side = new THREE.MeshLambertMaterial({ map: sideTex });
+    const front = new THREE.MeshLambertMaterial({ map: frontTex });
+    const top = new THREE.MeshLambertMaterial({ map: topTex });
     const mats = [side, side, top, top, front, side]; // +x, -x, +y, -y, +z (vers la caméra), -z
     const tall = [], low = [];
     for (let y = 0; y < MH; y++) for (let x = 0; x < MW; x++) {
       const i = y * MW + x;
       if (D.tiles[i] || D.distF[i] !== 1) continue;
       const southWall = isF(x, y - 1) || isF(x - 1, y - 1) && isF(x + 1, y - 1);
-      const h = southWall ? 0.3 : 1.15;
+      const h = southWall ? 0.35 : 1.5;
       (southWall ? low : tall).push(mat4(x + 0.5, (h - 0.75) / 2, y + 0.5, 0, 1, h + 0.75, 1));
     }
     const geo = new THREE.BoxGeometry(1, 1, 1);
@@ -273,7 +287,7 @@ export async function create(canvas, api) {
     const torches = [];
     for (const t of D.torches) {
       const b = makeBill(api.envImg, 0); frameEnv(b, 'torch', 0.75);
-      b.g.position.set(W2(t.x), 0.2, Math.floor(W2(t.y)) + 1.06); group.add(b.g); torches.push(b);
+      b.g.position.set(W2(t.x), 0.55, Math.floor(W2(t.y)) + 1.04); group.add(b.g); torches.push(b);
     }
     level = { group, torches: D.torches.map((t) => new THREE.Vector3(W2(t.x), 1.0, Math.floor(W2(t.y)) + 1.3)), torchBills: torches, doors: new Map(), lava: (D.glows || []).map((g) => new THREE.Vector3(W2(g.x), -0.3, W2(g.y))) };
     // herses : piques au sol quand la salle est verrouillée ; portes scellées dorées
@@ -282,7 +296,7 @@ export async function create(canvas, api) {
       if (level.doors.has(key)) continue;
       const vertical = isF(d.x, d.y - 1) && isF(d.x, d.y + 1);
       const b = makeBill(api.atlas2x, 0); frameSpr(b, 'floor_spikes_anim_f3', 1);
-      b.g.position.set(d.x + 0.5, 0, d.y + 1); b.g.visible = false; group.add(b.g);
+      b.g.position.set(d.x + 0.5, 0, d.y + 0.9); b.g.visible = false; group.add(b.g);
       const gate = toonify(piece(dungeon, 'wall_gated').clone(), { tint: 0xffd36a });
       gate.scale.set(0.25, 0.25 * 0.95, 0.15); gate.position.set(d.x + 0.5, 0, d.y + 0.5); gate.rotation.y = vertical ? 0 : Math.PI / 2; gate.visible = false; group.add(gate);
       level.doors.set(key, { x: d.x, y: d.y, spBill: b, gate, h: -0.7 });
