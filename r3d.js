@@ -4,6 +4,7 @@
 import * as THREE from 'three';
 import { GLTFLoader } from './vendor/jsm/loaders/GLTFLoader.js';
 import * as SkeletonUtils from './vendor/jsm/utils/SkeletonUtils.js';
+import { mergeGeometries } from './vendor/jsm/utils/BufferGeometryUtils.js';
 
 const T = 16; // 1 case du jeu = 16 unités 2D = 1 unité 3D
 const W2 = (v) => v / T;
@@ -94,11 +95,18 @@ export async function create(canvas, api) {
   // --- chargement des modèles ---
   const loader = new GLTFLoader();
   const load = (f) => new Promise((res, rej) => loader.load('assets/3d/' + f, res, undefined, rej));
-  const [dungeon, props, knight, mage, skel, ...anims] = await Promise.all(['dungeon.glb', 'props.glb', 'knight.glb', 'mage.glb', 'skeleton.glb',
+  const [dungeon, props, knight, mage, skel, hall, ...anims] = await Promise.all(['dungeon.glb', 'props.glb', 'knight.glb', 'mage.glb', 'skeleton.glb', 'hall.glb',
     'anim_general.glb', 'anim_movementbasic.glb', 'anim_combatmelee.glb', 'anim_combatranged.glb', 'anim_special.glb'].map(load));
   const CLIPS = {};
   for (const g of anims) for (const c of g.animations) CLIPS[c.name] = c;
   const piece = (gltf, name) => gltf.scenes.find((s) => s.name === name);
+  // certains objets du château ne sont pas centrés sur leur origine : on les recentre (x/z) et on les pose au sol
+  for (const n of ['vase', 'crate', 'barrel', 'statue']) {
+    const sc = piece(hall, n); if (!sc) continue;
+    sc.updateMatrixWorld(true);
+    const bb = new THREE.Box3().setFromObject(sc), c = bb.getCenter(new THREE.Vector3());
+    for (const ch of sc.children) { ch.position.x -= c.x; ch.position.z -= c.z; ch.position.y -= bb.min.y; }
+  }
 
   // matériaux cel-shading pour tout un modèle
   function toonify(root, { outline = null, tint = null } = {}) {
@@ -145,9 +153,151 @@ export async function create(canvas, api) {
 
   const lvKey = (G) => G.D.seed + ':' + G.floorN + ':' + style + ':' + api.getCamMode();
   const IN3P = () => api.getCamMode() === 'tps';
+  const CS = () => (IN3P() ? 0.6 : 1); // échelle des personnages
+
+  // =============================================================
+  // VUE 3e PERSONNE : grandes salles de château (Quaternius, Modular Dungeon, CC0)
+  // plafond avec poutres, murs hauts, colonnes, arches, lustres, bannières, toiles d'araignée
+  // =============================================================
+  function buildHallLevel(G) {
+    const D = G.D, MW = G.MW, MH = G.MH;
+    const isF = (x, y) => x >= 0 && y >= 0 && x < MW && y < MH && D.tiles[y * MW + x] === 1;
+    let rnd = (D.seed ^ 0x2545f491) >>> 0;
+    const R = () => ((rnd = (rnd * 1664525 + 1013904223) >>> 0) / 4294967296);
+    const group = new THREE.Group();
+    const hp = (n) => piece(hall, n);
+    const roomOf = new Int16Array(MW * MH).fill(-1);
+    D.rooms.forEach((r, i) => { for (let y = r.y; y < r.y + r.h; y++) for (let x = r.x; x < r.x + r.w; x++) roomOf[y * MW + x] = i; });
+    const inRoom = (x, y) => isF(x, y) && roomOf[y * MW + x] >= 0;
+    const HR = 3.4, HC = 2.1; // hauteur sous plafond : salles / couloirs
+    const H = (x, y) => (inRoom(x, y) ? HR : HC);
+    const M4 = (x, y, z, rx, ry, sx, sy, sz) => new THREE.Matrix4().compose(new THREE.Vector3(x, y, z), new THREE.Quaternion().setFromEuler(new THREE.Euler(rx, ry, 0)), new THREE.Vector3(sx, sy, sz));
+    const floors = [], ceils = [], ceilsLow = [], walls = [], cols = [], beams = [], torchesM = [], banners = [], webs = [], crates = [], barrels = [], vases = [], bricks = [];
+    const lightSpots = [], chandSpots = [];
+    for (let y = 0; y < MH; y++) for (let x = 0; x < MW; x++) {
+      if (!isF(x, y)) continue;
+      const h = H(x, y);
+      floors.push(M4(x + 0.5, -0.07, y + 0.5, 0, Math.floor(R() * 4) * Math.PI / 2, 0.5, 0.5, 0.5));
+      (inRoom(x, y) ? ceils : ceilsLow).push(M4(x + 0.5, h + 0.07, y + 0.5, Math.PI, 0, 0.5, 0.5, 0.5));
+      if (R() < 0.04 && inRoom(x, y)) bricks.push(mat4(x + R(), 0, y + R(), R() * 6.28, 0.6, 0.6, 0.6));
+      // murs : panneaux empilés jusqu'au plafond
+      const sides = [[0, -1, x + 0.5, y - 0.11, 0], [0, 1, x + 0.5, y + 1.11, Math.PI], [-1, 0, x - 0.11, y + 0.5, Math.PI / 2], [1, 0, x + 1.11, y + 0.5, -Math.PI / 2]];
+      for (const [dx, dy, wx, wz, ry] of sides) {
+        if (isF(x + dx, y + dy)) {
+          // linteau : mur entre le plafond bas d'un couloir et le plafond haut d'une salle
+          const hn = H(x + dx, y + dy);
+          if (hn < h) walls.push(M4(wx - dx * 0.0, (hn + h) / 2, wz, 0, ry, 0.5, 0.5 * (h - hn), 0.5));
+          continue;
+        }
+        const n = Math.round(h);
+        for (let k = 0; k < n; k++) walls.push(M4(wx, (k + 0.5) * h / n, wz, 0, ry, 0.5, 0.5 * h / n, 0.5));
+        if (inRoom(x, y)) {
+          const along = dx ? y : x;
+          // torches tous les 4 pas, bannières et toiles d'araignée au hasard
+          if (along % 4 === 1) {
+            const ox = -dx * 0.12, oz = -dy * 0.12;
+            torchesM.push(M4(wx + ox * 2, 1.35, wz + oz * 2, 0, ry + Math.PI, 0.55, 0.55, 0.55));
+            lightSpots.push(new THREE.Vector3(wx - dx * 0.5, 1.7, wz - dy * 0.5));
+          } else if (R() < 0.18) banners.push(M4(wx - dx * 0.14, h - 0.35, wz - dy * 0.14, 0, ry + Math.PI, 0.42, 0.42, 0.42));
+        }
+      }
+      // coins intérieurs des salles : caisses, tonneaux, vases, toiles d'araignée
+      if (inRoom(x, y)) {
+        const wallN = !isF(x, y - 1), wallS = !isF(x, y + 1), wallW = !isF(x - 1, y), wallE = !isF(x + 1, y);
+        if ((wallN || wallS) && (wallW || wallE)) {
+          const cx = x + 0.5 + (wallW ? -0.22 : 0.22), cz = y + 0.5 + (wallN ? -0.22 : 0.22);
+          const r = R();
+          if (r < 0.35) crates.push(mat4(cx, 0, cz, R() * 0.6, 0.38, 0.38, 0.38));
+          else if (r < 0.7) barrels.push(mat4(cx, 0, cz, R() * 6, 0.36, 0.36, 0.36));
+          else vases.push(mat4(cx, 0, cz, R() * 6, 0.9, 0.9, 0.9));
+          webs.push(M4(x + 0.5 + (wallW ? -0.38 : 0.38), H(x, y) - 0.55, y + 0.5 + (wallN ? -0.38 : 0.38), 0, (wallW ? 0 : Math.PI) + (wallN ? 0 : (wallW ? -Math.PI / 2 : Math.PI / 2)), 0.7, 0.7, 0.7));
+        }
+      }
+    }
+    // colonnes aux angles et poutres sous le plafond
+    for (let y = 0; y <= MH; y++) for (let x = 0; x <= MW; x++) {
+      const a = isF(x - 1, y - 1), b = isF(x, y - 1), c = isF(x - 1, y), d = isF(x, y);
+      const n = a + b + c + d;
+      if (n > 0 && n < 4 && !((a && d && !b && !c) || (b && c && !a && !d))) {
+        const h = Math.max(a ? H(x - 1, y - 1) : 0, b ? H(x, y - 1) : 0, c ? H(x - 1, y) : 0, d ? H(x, y) : 0);
+        cols.push(M4(x, 0, y, 0, 0, 0.3, h / 4.07, 0.3));
+      }
+    }
+    for (const r of D.rooms) {
+      for (let y = r.y + 1; y < r.y + r.h; y += 2) beams.push(mat4(r.x + r.w / 2, HR - 0.12, y, 0, r.w, 0.16, 0.2));
+      beams.push(mat4(r.x + r.w / 2, HR - 0.3, r.y + r.h / 2, 0, 0.2, 0.16, r.h));
+      if (r.w >= 6) chandSpots.push(new THREE.Vector3(r.x + r.w / 2, HR - 1.05, r.y + r.h / 2));
+    }
+    // --- matériaux et instances ---
+    instanced(hp('floor'), floors, group);
+    instanced(hp('bricks'), bricks, group);
+    instanced(hp('floor'), ceils, group, { color: 0x6a5048 });
+    instanced(hp('floor'), ceilsLow, group, { color: 0x5a4440 });
+    instanced(hp('wall'), walls, group);
+    instanced(hp('column'), cols, group);
+    instanced(hp('torch'), torchesM, group);
+    instanced(hp('banner'), banners, group);
+    instanced(hp('cobweb'), webs, group);
+    instanced(hp('crate'), crates, group);
+    instanced(hp('barrel'), barrels, group);
+    instanced(hp('vase'), vases, group);
+    const box = new THREE.BoxGeometry(1, 1, 1);
+    const beamIM = new THREE.InstancedMesh(box, toon(null, { color: new THREE.Color(0x4a2c1c) }), beams.length);
+    beams.forEach((M, i) => beamIM.setMatrixAt(i, M)); beamIM.frustumCulled = false; group.add(beamIM);
+    // arches au-dessus de chaque passage de salle
+    const archs = [], done = new Set();
+    for (const r of D.rooms) for (let i = 0; i < r.doors.length; i += 2) {
+      const a = r.doors[i], b = r.doors[i + 1]; if (!b) continue;
+      const key = Math.min(a.x, b.x) + ',' + Math.min(a.y, b.y); if (done.has(key)) continue; done.add(key);
+      const horiz = a.y === b.y;
+      archs.push(M4((a.x + b.x) / 2 + 0.5, 0, (a.y + b.y) / 2 + 0.5, 0, horiz ? 0 : Math.PI / 2, 0.52, HC / 4, 0.4));
+    }
+    instanced(hp('arch'), archs, group);
+    // lustres : couronne de fer, chaînes, bougies
+    const iron = toon(null, { color: new THREE.Color(0x2a2226) }), wax = toon(null, { color: new THREE.Color(0xf0e2c0) });
+    const flame = new THREE.MeshBasicMaterial({ color: 0xffd070 });
+    // un seul lustre modèle, dupliqué en « instances » (rapide sur iPhone)
+    if (chandSpots.length) {
+      const g = new THREE.Group();
+      const ring = new THREE.Mesh(new THREE.TorusGeometry(0.45, 0.035, 6, 24), iron); ring.rotation.x = Math.PI / 2; g.add(ring);
+      for (let k = 0; k < 3; k++) { const ch = new THREE.Mesh(new THREE.CylinderGeometry(0.012, 0.012, 1.0, 4), iron); const a = k * 2.094; ch.position.set(Math.cos(a) * 0.22, 0.5, Math.sin(a) * 0.22); ch.rotation.z = Math.cos(a) * 0.4; ch.rotation.x = -Math.sin(a) * 0.4; g.add(ch); }
+      for (let k = 0; k < 8; k++) {
+        const a = k * Math.PI / 4;
+        const cd = new THREE.Mesh(new THREE.CylinderGeometry(0.03, 0.03, 0.14, 6), wax); cd.position.set(Math.cos(a) * 0.45, 0.09, Math.sin(a) * 0.45); g.add(cd);
+        const fl = new THREE.Mesh(new THREE.ConeGeometry(0.025, 0.07, 5), flame); fl.position.set(Math.cos(a) * 0.45, 0.2, Math.sin(a) * 0.45); g.add(fl);
+      }
+      g.updateMatrixWorld(true);
+      // on fusionne les pièces de même matière : 3 objets au lieu de 20
+      const byMat = new Map();
+      g.traverse((o) => { if (o.isMesh) { const geo = o.geometry.clone().applyMatrix4(o.matrixWorld); geo.deleteAttribute('uv'); (byMat.get(o.material) || byMat.set(o.material, []).get(o.material)).push(geo); } });
+      for (const [mat, geos] of byMat) {
+        const merged = mergeGeometries(geos);
+        const im = new THREE.InstancedMesh(merged, mat, chandSpots.length);
+        chandSpots.forEach((c, i) => im.setMatrixAt(i, new THREE.Matrix4().makeTranslation(c.x, c.y, c.z)));
+        im.frustumCulled = false; group.add(im);
+      }
+    }
+    scene.add(group);
+    const hmap = new Float32Array(MW * MH); for (let i = 0; i < MW * MH; i++) hmap[i] = isF(i % MW, (i / MW) | 0) ? H(i % MW, (i / MW) | 0) : 0;
+    level = { group, isl: null, hall: true, hmap, torches: lightSpots, doors: new Map(), lava: chandSpots };
+    // herses et portes scellées
+    const K = 0.25;
+    for (const room of D.rooms) for (const d of room.doors) {
+      const key = d.x + ',' + d.y;
+      if (level.doors.has(key)) continue;
+      const vertical = isF(d.x, d.y - 1) && isF(d.x, d.y + 1);
+      const sp = toonify(piece(props, 'spikes').clone(), { outline: OUTLINE_PROP });
+      sp.scale.setScalar(0.55); sp.position.set(d.x + 0.5, -0.7, d.y + 0.5); group.add(sp);
+      const gate = toonify(piece(dungeon, 'wall_gated').clone(), { tint: 0xffd36a });
+      gate.scale.set(K, K * HC * 0.95, K * 0.6); gate.position.set(d.x + 0.5, 0, d.y + 0.5); gate.rotation.y = vertical ? 0 : Math.PI / 2; gate.visible = false; group.add(gate);
+      level.doors.set(key, { x: d.x, y: d.y, sp, gate, h: -0.7 });
+    }
+    levelKey = lvKey(G);
+  }
   function buildLevel(G) {
     if (level) { scene.remove(level.group); level.group.traverse((o) => { if (o.isInstancedMesh) o.dispose(); if (o.isMesh && o.material && o.material.map && o.material.map.isCanvasTexture) o.material.map.dispose(); }); }
     if (PIX()) return buildPixelLevel(G);
+    if (IN3P()) return buildHallLevel(G);
     const D = G.D, MW = G.MW, MH = G.MH;
     const isF = (x, y) => x >= 0 && y >= 0 && x < MW && y < MH && D.tiles[y * MW + x] === 1;
     const group = new THREE.Group();
@@ -436,11 +586,11 @@ export async function create(canvas, api) {
     if (weapon === 'staff') attach(root, 'handslot.r', piece(props, 'staff'));
     if (kind === 'player' && cls !== 'mage') attach(root, 'handslot.l', piece(props, 'shield_badge_color'));
     const holder = new THREE.Group();
-    const s = size / 2.55; root.scale.setScalar(s);
+    const s = size / 2.55 * CS(); root.scale.setScalar(s);
     holder.add(root);
     const mixer = new THREE.AnimationMixer(root);
     const mats = []; root.traverse((o) => { if (o.isMesh && o.material.isMeshToonMaterial) mats.push(o.material); });
-    const blob = new THREE.Mesh(new THREE.CircleGeometry(0.32 * size / 1.2, 16), new THREE.MeshBasicMaterial({ color: 0, transparent: true, opacity: 0.35, depthWrite: false }));
+    const blob = new THREE.Mesh(new THREE.CircleGeometry(0.32 * size / 1.2 * CS(), 16), new THREE.MeshBasicMaterial({ color: 0, transparent: true, opacity: 0.35, depthWrite: false }));
     blob.rotation.x = -Math.PI / 2; blob.position.y = 0.02; holder.add(blob);
     scene.add(holder);
     return { holder, root, mixer, mats, actions: {}, cur: null, isSkel, baseColors: mats.map((m) => m.color.clone()), dying: 0 };
@@ -474,6 +624,7 @@ export async function create(canvas, api) {
   const chars = new Map(); // entité du jeu -> personnage 3D
   const bills = new Map(); // entité du jeu -> image debout (style HD 2.5D)
   let playerBill = null;
+  let lastCam = api.getCamMode();
   function pixelChars(G, t) {
     const p = G.p;
     if (!playerBill) playerBill = makeBill(api.hdImg, 0.32);
@@ -622,12 +773,13 @@ export async function create(canvas, api) {
     canvas.style.width = w + 'px'; canvas.style.height = h + 'px';
     camera.aspect = w / h;
     camInit = false;
-    scene.background = TPS() ? skyTex : null;
-    scene.fog.color.setHex(TPS() ? 0x241040 : 0x0a0514);
+    scene.background = null;
+    renderer.setClearColor(TPS() ? 0x0c0808 : 0x0a0514, 1);
+    scene.fog.color.setHex(TPS() ? 0x140c0a : 0x0a0514);
     if (TPS()) {
-      // vue à la 3ème personne : grand angle, le brouillard cache le lointain
-      camera.fov = camera.aspect < 1 ? 70 : 55;
-      scene.fog.near = 7; scene.fog.far = 22;
+      // vue à la 3e personne (façon PUBG Mobile) : grand angle, le brouillard estompe le fond des grandes salles
+      camera.fov = camera.aspect < 1 ? 78 : 62;
+      scene.fog.near = 5; scene.fog.far = 19;
       camera.updateProjectionMatrix();
       return;
     }
@@ -650,6 +802,8 @@ export async function create(canvas, api) {
     const now = performance.now();
     const dt = Math.min(0.05, (now - clock.last) / 1000); clock.last = now;
     const t = G.time;
+    const cm = api.getCamMode();
+    if (cm !== lastCam) { lastCam = cm; clearAll(); resize(); }
     if (lvKey(G) !== levelKey) buildLevel(G);
 
     const p = G.p;
@@ -821,7 +975,11 @@ export async function create(canvas, api) {
       ...(G.portal ? [[G.portal.x, G.portal.y, 0xb37cff, 5]] : [])];
     if (level.torchBills) for (const tb of level.torchBills) face(tb);
     const nearLava = (level.lava || []).map((v) => [v, v.distanceToSquared(pv)]).sort((a, b) => a[1] - b[1]);
-    lavaLights.forEach((l, i) => { const it = nearLava[i]; if (it && it[1] < 250) { l.position.copy(it[0]); l.intensity = 4 + Math.sin(t * 2 + i) * 0.8; } else l.intensity = 0; });
+    lavaLights.forEach((l, i) => {
+      const it = nearLava[i];
+      l.color.setHex(level.hall ? 0xffc070 : 0xff6a2a); l.distance = level.hall ? 7 : 6;
+      if (it && it[1] < 250) { l.position.copy(it[0]); l.intensity = (level.hall ? 7 : 4) + Math.sin(t * 2 + i) * 0.8; } else l.intensity = 0;
+    });
     fxLights.forEach((l, i) => { const h = hot[i]; if (h) { l.position.set(W2(h[0]), 0.9, W2(h[1])); l.color.setHex(h[2]); l.intensity = h[3]; } else l.intensity = 0; });
 
     if (level.isl) animIslands(level.isl, t);
@@ -829,23 +987,28 @@ export async function create(canvas, api) {
     // --- caméra ---
     const sh = G.shake * 0.012;
     if (TPS()) {
-      // caméra derrière l'épaule du héros, orientée selon l'angle choisi par le joueur
-      const yaw = api.getYaw(), fx = Math.sin(yaw), fz = -Math.cos(yaw);
+      // caméra par-dessus l'épaule droite (façon PUBG Mobile), orientée par le joueur (glisser à droite de l'écran)
+      const yaw = api.getYaw(), pitch = api.getPitch ? api.getPitch() : 0.22;
+      const fx = Math.sin(yaw), fz = -Math.cos(yaw), rx = -fz, rz = fx;
       const px = W2(p.x), pz = W2(p.y);
-      let back = camera.aspect < 1 ? 4.6 : 4.0, up = camera.aspect < 1 ? 3.1 : 2.5;
-      // si un mur se trouve entre le héros et la caméra, on la rapproche (et on la baisse un peu)
-      for (let k = 0.4; k <= back; k += 0.1) {
-        const cx = Math.floor(px - fx * k), cz = Math.floor(pz - fz * k);
-        if (cx < 0 || cz < 0 || cx >= G.MW || cz >= G.MH || G.D.tiles[cz * G.MW + cx] !== 1) {
-          // mur derrière : la caméra recule moins mais monte, pour regarder par-dessus le mur
-          const nb = Math.max(0.6, k - 0.3); up += (back - nb) * 0.55; back = nb; break;
-        }
-      }
-      const tx = px - fx * back, tz = pz - fz * back;
-      const lx = px + fx * 2.2, lz = pz + fz * 2.2;
-      if (!camInit) { camPos.set(tx, up, tz); camLook.set(lx, 0.7, lz); camInit = true; }
-      const k = 1 - Math.pow(0.0005, dt);
-      camPos.lerp(tmpV.set(tx, up, tz), k); camLook.lerp(tmpV.set(lx, 0.7, lz), Math.min(1, k * 1.5));
+      const free = (x, z) => { const tx = Math.floor(x), tz = Math.floor(z); return tx >= 0 && tz >= 0 && tx < G.MW && tz < G.MH && G.D.tiles[tz * G.MW + tx] === 1; };
+      let side = camera.aspect < 1 ? 0.24 : 0.42;
+      if (!free(px + rx * (side + 0.15), pz + rz * (side + 0.15))) side = 0;
+      const head = 0.62;
+      const pvx = px + rx * side, pvz = pz + rz * side;
+      let back = 1.75;
+      for (let k = 0.2; k <= back; k += 0.05) { if (!free(pvx - fx * k * Math.cos(pitch), pvz - fz * k * Math.cos(pitch))) { back = Math.max(0.35, k - 0.18); break; } }
+      const tx = pvx - fx * back * Math.cos(pitch), tz = pvz - fz * back * Math.cos(pitch);
+      // dos au mur : la caméra monte et regarde par-dessus la tête au lieu de rentrer dans le héros
+      const close = Math.max(0, 1.75 - back);
+      const ti = Math.floor(tz) * G.MW + Math.floor(tx);
+      const ceil = level.hall && level.hmap ? (level.hmap[ti] || 2.1) - 0.25 : 4;
+      const up = Math.min(ceil, head + 0.18 + back * Math.sin(pitch) + close * 0.75);
+      const ld = 5 - close * 2.2;
+      const lx = pvx + fx * ld, lz = pvz + fz * ld, ly = head - ld * Math.tan(pitch) * 0.55 - close * 0.35;
+      if (!camInit) { camPos.set(tx, up, tz); camLook.set(lx, ly, lz); camInit = true; }
+      const k = 1 - Math.pow(0.000001, dt);
+      camPos.lerp(tmpV.set(tx, up, tz), k); camLook.lerp(tmpV.set(lx, ly, lz), k);
       camera.position.set(camPos.x + (Math.random() - 0.5) * sh, camPos.y + (Math.random() - 0.5) * sh, camPos.z);
       camera.lookAt(camLook);
       renderer.render(scene, camera);
@@ -868,5 +1031,5 @@ export async function create(canvas, api) {
     canvas.style.display = on ? 'block' : 'none';
     if (on) { resize(); clock.last = performance.now(); }
   }
-  return { render, project, enable, setStyle, resize, get enabled() { return enabled; } };
+  return { render, project, enable, setStyle, resize, get charScale() { return CS(); }, get enabled() { return enabled; } };
 }

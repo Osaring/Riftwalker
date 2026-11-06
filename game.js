@@ -1,7 +1,7 @@
 /* RIFTWALKER — roguelike de donjons (V1 : le Guerrier)
    Tout le jeu tient dans ce fichier. Graphismes : 0x72 Dungeon Tileset II (CC0). */
 'use strict';
-const APP_VERSION = '1.7.0';
+const APP_VERSION = '1.8.0';
 
 // ============================================================
 // 1. OUTILS
@@ -606,7 +606,7 @@ let G = null;          // partie en cours
 let state = 'loading'; // loading | title | play | pause | dead | trans
 const input = { mx: 0, my: 0, keys: {}, attackHeld: false };
 // angle de la caméra en vue 3ème personne (0 = on regarde vers le haut de la carte)
-let camYaw = 0, camManualT = 0;
+let camYaw = 0, camManualT = 0, camPitch = 0.22;
 // en 3ème personne, « haut » sur le joystick = droit devant la caméra
 function toWorld(jx, jy) {
   if (GFX !== 'tps') return [jx, jy];
@@ -680,6 +680,10 @@ function enterFloor(floorN, seed) {
   const s = D.start;
   G.p.x = (s.x + s.w / 2) * TILE; G.p.y = (s.y + s.h / 2) * TILE + 4;
   G.cam = { x: G.p.x, y: G.p.y };
+  // 3e personne : au début de l'étage, la caméra regarde vers une sortie de la salle
+  const d0 = s.doors[0];
+  if (d0) { const dx = d0.x * TILE + 8 - G.p.x, dy = d0.y * TILE + 8 - G.p.y, l = Math.hypot(dx, dy) || 1; G.p.fx = dx / l; G.p.fy = dy / l; camYaw = Math.atan2(dx, -dy); }
+  camPitch = 0.22;
   prerenderMap();
   G.outMask = buildOutMask(D);
   saveRun();
@@ -1072,15 +1076,6 @@ function update(dt) {
   const jx = mx, jy = my;
   [mx, my] = toWorld(mx, my);
   const ml = Math.hypot(mx, my);
-  // 3e personne : quand on avance, la caméra se replace doucement derrière le héros
-  if (GFX === 'tps') {
-    camManualT = Math.max(0, camManualT - dt);
-    if (ml > 0.3 && jy < -0.3 && Math.abs(jx) < Math.abs(jy) * 1.7 && camManualT <= 0) {
-      let d = Math.atan2(mx, -my) - camYaw;
-      while (d > Math.PI) d -= 2 * Math.PI; while (d < -Math.PI) d += 2 * Math.PI;
-      camYaw += d * Math.min(1, dt * 1.4);
-    }
-  }
   if (ml > 1) { mx /= ml; my /= ml; }
   p.moving = ml > 0.1;
   if (p.cls === 'mage') {
@@ -1687,7 +1682,7 @@ function renderOverlay3D() {
   for (const e of G.enemies) {
     if (e.dead || !e.active) continue;
     const look = { big_zombie: 1.9, ogre: 2, big_demon: 2.15, goblin: 0.8, imp: 0.8, tiny_zombie: 0.85 }[e.kind] || 1;
-    const [x, y, ok] = P(e.x, e.y, e.kind === 'mimic' ? 0.7 : 1.3 * look);
+    const [x, y, ok] = P(e.x, e.y, (e.kind === 'mimic' ? 0.7 : 1.3 * look) * R3D.charScale);
     if (!ok) continue;
     if (e.hp < e.maxHp) {
       const bw = e.d.elite ? 28 : 15, bx = Math.round(x - bw / 2), by = Math.round(y - 6);
@@ -1700,7 +1695,7 @@ function renderOverlay3D() {
   }
   // barre d'incantation
   if (p.cls === 'mage' && p.casting > 0) {
-    const [x, y] = P(p.x, p.y, 1.75);
+    const [x, y] = P(p.x, p.y, 1.75 * R3D.charScale);
     const kk = 1 - p.casting / p.castT, bw = 24, bx = Math.round(x - bw / 2), by = Math.round(y - 4);
     ctx.fillStyle = '#000'; ctx.fillRect(bx - 1, by - 1, bw + 2, 5);
     ctx.fillStyle = '#3a2008'; ctx.fillRect(bx, by, bw, 3);
@@ -1709,7 +1704,7 @@ function renderOverlay3D() {
   // nombres de dégâts
   ctx.textAlign = 'center';
   for (const tx of G.texts) {
-    const [x, y, ok] = P(tx.x, tx.y + 18, 1.3);
+    const [x, y, ok] = P(tx.x, tx.y + 18, 1.3 * R3D.charScale);
     if (!ok) continue;
     const kk = tx.t / tx.T;
     const s = tx.crit ? tx.size * (1 + Math.max(0, kk - 0.8) * 3) : tx.size;
@@ -2073,9 +2068,14 @@ function setupControls() {
   const end = (e) => { if (e.pointerId !== sid) return; sid = null; input.mx = input.my = 0; base.classList.remove('on'); };
   // 3ème personne : glisser le doigt à droite de l'écran fait tourner la caméra
   const cz = $('camZone');
-  let cid = null, clx = 0;
-  cz.addEventListener('pointerdown', (e) => { audioUnlock(); if (cid !== null) return; cid = e.pointerId; clx = e.clientX; cz.setPointerCapture(e.pointerId); e.preventDefault(); });
-  cz.addEventListener('pointermove', (e) => { if (e.pointerId !== cid) return; camYaw += (e.clientX - clx) * 0.009; clx = e.clientX; camManualT = 2.5; });
+  let cid = null, clx = 0, cly = 0;
+  cz.addEventListener('pointerdown', (e) => { audioUnlock(); if (cid !== null) return; cid = e.pointerId; clx = e.clientX; cly = e.clientY; cz.setPointerCapture(e.pointerId); e.preventDefault(); });
+  cz.addEventListener('pointermove', (e) => {
+    if (e.pointerId !== cid) return;
+    camYaw += (e.clientX - clx) * 0.009;
+    camPitch = clamp(camPitch + (e.clientY - cly) * 0.006, -0.15, 0.75);
+    clx = e.clientX; cly = e.clientY; camManualT = 2.5;
+  });
   const cend = (e) => { if (e.pointerId === cid) cid = null; };
   cz.addEventListener('pointerup', cend); cz.addEventListener('pointercancel', cend);
   zone.addEventListener('pointerup', end); zone.addEventListener('pointercancel', end);
@@ -2220,7 +2220,7 @@ async function start3D() {
   try {
     if (!R3D) { toast('Chargement de la 3D…', '#c9a2ff', 4); const m = await import('./r3d.js'); R3D = await m.create(canvas3d(), {
       getGame: () => G, getState: () => state, getStyle: () => (GFX === 'hd3d' ? 'pixel' : 'cel'),
-      getCamMode: () => (GFX === 'tps' ? 'tps' : 'top'), getYaw: () => camYaw,
+      getCamMode: () => (GFX === 'tps' ? 'tps' : 'top'), getYaw: () => camYaw, getPitch: () => camPitch,
       groundCanvas, playerKey: () => playerHDKey(G.p), enemyKey: enemyHDKey,
       get HDS() { return HDS; }, get SPR() { return SPR; }, get ENV() { return ENV; },
       get hdImg() { return hdImg; }, get envImg() { return envImg; }, get atlas2x() { return TWIN.get(atlas); },

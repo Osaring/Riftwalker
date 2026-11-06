@@ -13,6 +13,7 @@ Roguelike de donjons pour iPhone (site web jouable hors ligne).
 - Musique et bruitages synthétisés (thèmes menu, exploration, combat, gardien)
 - Cinq styles graphiques au choix (menu Graphismes) : Classique, Pixel HD, HD 2.5D, Cel-shading 3D, 3D à la 3ème personne
 - Décors hors zone de jeu (caverne, lave, gouffres, rochers)
+- Vue 3ème personne : grandes salles de château (plafonds à poutres, colonnes, arches, lustres) et caméra par-dessus l'épaule
 
 ## Crédits
 - Graphismes : [0x72 — Dungeon Tileset II](https://0x72.itch.io/dungeontileset-ii) (CC0)
