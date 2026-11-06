@@ -25,8 +25,8 @@
     <div class="bar rage" id="resBar"><div class="fill" id="rageFill"></div><span id="rageText">0 rage</span></div>
     <div id="infos">
       <span id="floorLabel">Étage 1</span>
-      <span class="inv"><i class="ico" data-sprite="coin_anim_f0"></i><b id="goldText">0</b></span>
-      <span class="inv" id="keyInv"><i class="ico" data-sprite="key"></i><b id="keyText">0</b></span>
+      <span class="inv"><canvas class="ico2" data-icon="i_coin"></canvas><b id="goldText">0</b></span>
+      <span class="inv" id="keyInv"><canvas class="ico2" data-icon="i_key"></canvas><b id="keyText">0</b></span>
     </div>
   </div>
   <div id="topRight">
@@ -37,6 +37,7 @@
   <div id="camZone"></div>
   <div id="stickZone"><div id="stickBase"><div id="stickKnob"></div></div></div>
   <div id="actions">
+    <button class="act small" id="btnRoll" data-label="Roulade"><canvas></canvas><span class="cd"></span></button>
     <button class="act" id="btnPotion" data-label="Potion"><canvas></canvas><span class="cd"></span><b class="count" id="potionCount">0</b></button>
     <button class="act" id="btnWhirl" data-label="Tourbillon"><canvas></canvas><span class="cd"></span><b class="cost" id="costWhirl">35</b></button>
     <button class="act" id="btnCharge" data-label="Charge"><canvas></canvas><span class="cd"></span><b class="cost" id="costCharge"></b></button>
@@ -64,6 +65,9 @@
   <h2>Comment jouer</h2>
   <ul>
     <li><b>Déplacement :</b> pose ton pouce n'importe où sur la moitié gauche de l'écran. Garde le gros bouton appuyé pour attaquer en continu.</li>
+    <li><b>Cible :</b> tes attaques visent l'ennemi le plus proche <b>devant toi</b> (son nom et sa vie s'affichent en haut). En combat, la caméra le garde dans le cadre.</li>
+    <li><b>Roulade :</b> le petit bouton vert. Tu bondis dans la direction du joystick (ou en arrière) et tu es <span class="b">intouchable</span> pendant le geste.</li>
+    <li><b>Flèches rouges</b> au bord de l'écran : un ennemi hors de vue prépare un coup. Roule ou tourne-toi !</li>
     <li class="cls">Guerrier</li>
     <li><b>Frappe :</b> attaque à l'épée. Chaque coup réussi remplit ta <span class="r">rage</span>.</li>
     <li><b>Charge :</b> fonce sur l'ennemi le plus proche et l'étourdit. Donne de la rage.</li>
@@ -74,7 +78,7 @@
     <li><b>Nova de givre :</b> gèle les ennemis autour de toi. Une boule de feu sur un ennemi gelé est <span class="b">toujours critique</span>.</li>
     <li>Ton <span class="b">mana</span> remonte tout seul, plus vite hors combat.</li>
     <li class="cls">Caméra</li>
-    <li>Le joystick suit la caméra : vers le haut = droit devant toi. Glisse le doigt sur la droite de l'écran pour tourner la caméra (gauche/droite) et regarder plus haut ou plus bas (haut/bas), comme sur PUBG Mobile.</li>
+    <li>Le joystick suit la caméra : vers le haut = droit devant toi. Glisse le doigt sur la droite de l'écran pour tourner la caméra et regarder plus haut ou plus bas, comme sur PUBG Mobile. En combat, si tu la tournes toi-même, elle te laisse la main quelques secondes.</li>
     <li class="cls">Conseils</li>
     <li>Quand un ennemi <span class="r">clignote en rouge</span>, il prépare un coup : éloigne-toi !</li>
     <li>Les salles se verrouillent tant que les monstres sont en vie.</li>

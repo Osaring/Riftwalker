@@ -139,20 +139,50 @@ export async function create(canvas, api) {
   // DÉCOR : un niveau = sols, murs, piliers, torches (en « instances »)
   // =============================================================
   let level = null, levelKey = '';
+  // OPTIMISATION : en vue 3e personne, les objets répétés sont regroupés par morceaux de 16x16 cases.
+  // La carte graphique ne dessine que les morceaux dans le champ de la caméra (et pas trop loin).
+  const CHUNK = 16;
+  function chunked(mats) {
+    if (!IN3P()) return [mats];
+    const by = new Map(), v = new THREE.Vector3();
+    for (const M of mats) { v.setFromMatrixPosition(M); const k = Math.floor(v.x / CHUNK) + ',' + Math.floor(v.z / CHUNK); (by.get(k) || by.set(k, []).get(k)).push(M); }
+    return [...by.values()];
+  }
   function instanced(srcScene, mats, group, opts = {}) {
     if (!mats.length) return;
     srcScene.updateMatrixWorld(true);
     srcScene.traverse((o) => {
       if (!o.isMesh) return;
-      const mat = toon(o.material, opts.color ? { color: new THREE.Color(opts.color) } : {});
-      const im = new THREE.InstancedMesh(o.geometry, mat, mats.length);
-      const local = o.matrixWorld;
-      const m = new THREE.Matrix4();
-      mats.forEach((M, i) => { m.multiplyMatrices(M, local); im.setMatrixAt(i, m); });
-      im.instanceMatrix.needsUpdate = true;
-      im.frustumCulled = false;
-      group.add(im);
+      const mat = opts.material || toon(o.material, opts.color ? { color: new THREE.Color(opts.color) } : {});
+      for (const part of chunked(mats)) {
+        const im = new THREE.InstancedMesh(o.geometry, mat, part.length);
+        const local = o.matrixWorld;
+        const m = new THREE.Matrix4();
+        part.forEach((M, i) => { m.multiplyMatrices(M, local); im.setMatrixAt(i, m); });
+        im.instanceMatrix.needsUpdate = true;
+        if (IN3P()) { im.computeBoundingSphere(); im.frustumCulled = true; } else im.frustumCulled = false;
+        group.add(im);
+      }
     });
+  }
+  // « cuisson » d'une dalle : on photographie la pièce 3D vue de dessus une seule fois,
+  // puis le sol et le plafond sont de simples carrés plats avec cette image (2 triangles au lieu de 1 200)
+  function bakeTop(src, size = 256, front = false) {
+    const rt = new THREE.WebGLRenderTarget(size, size);
+    rt.texture.colorSpace = THREE.SRGBColorSpace;
+    const sc = new THREE.Scene(), obj = src.clone(true); sc.add(obj);
+    sc.add(new THREE.HemisphereLight(0xffffff, 0x9a8a80, 1.7));
+    const dl = new THREE.DirectionalLight(0xffffff, 1.6); dl.position.set(-0.6, 1, -0.4); sc.add(dl);
+    obj.updateMatrixWorld(true);
+    const bb = new THREE.Box3().setFromObject(obj), c = bb.getCenter(new THREE.Vector3()), sz = bb.getSize(new THREE.Vector3());
+    let cam;
+    if (front) { cam = new THREE.OrthographicCamera(-sz.x / 2, sz.x / 2, sz.y / 2, -sz.y / 2, 0.01, 50); dl.position.set(-0.5, 0.7, 1); cam.position.set(c.x, c.y, bb.max.z + 5); cam.lookAt(c.x, c.y, c.z); }
+    else { cam = new THREE.OrthographicCamera(-sz.x / 2, sz.x / 2, sz.z / 2, -sz.z / 2, 0.01, 50); cam.up.set(0, 0, -1); cam.position.set(c.x, bb.max.y + 5, c.z); cam.lookAt(c.x, c.y, c.z); }
+    const old = renderer.getRenderTarget(), cc = renderer.getClearColor(new THREE.Color()), ca = renderer.getClearAlpha();
+    renderer.setRenderTarget(rt); renderer.setClearColor(0x000000, 1); renderer.clear(); renderer.render(sc, cam); renderer.setRenderTarget(old);
+    renderer.setClearColor(cc, ca);
+    rt.texture.generateMipmaps = true; rt.texture.minFilter = THREE.LinearMipmapLinearFilter;
+    return rt.texture;
   }
   const mat4 = (x, y, z, ry = 0, sx = 1, sy = 1, sz = 1) => new THREE.Matrix4().compose(new THREE.Vector3(x, y, z), new THREE.Quaternion().setFromEuler(new THREE.Euler(0, ry, 0)), new THREE.Vector3(sx, sy, sz));
 
@@ -164,6 +194,9 @@ export async function create(canvas, api) {
   // VUE 3e PERSONNE : grandes salles de château (Quaternius, Modular Dungeon, CC0)
   // plafond avec poutres, murs hauts, colonnes, arches, lustres, bannières, toiles d'araignée
   // =============================================================
+  // nombre de cases d'un passage (2 dans les anciens étages sauvegardés, 3 maintenant)
+  function r0doors(D) { const d = D.rooms[0].doors; if (d.length < 2) return 2; let n = 1; while (n < d.length && (Math.abs(d[n].x - d[0].x) + Math.abs(d[n].y - d[0].y)) === n) n++; return n; }
+  let bakedFloor = null, bakedWall = null;
   function buildHallLevel(G) {
     const D = G.D, MW = G.MW, MH = G.MH;
     const isF = (x, y) => x >= 0 && y >= 0 && x < MW && y < MH && D.tiles[y * MW + x] === 1;
@@ -234,11 +267,17 @@ export async function create(canvas, api) {
       if (r.w >= 6) chandSpots.push(new THREE.Vector3(r.x + r.w / 2, HR - 1.05, r.y + r.h / 2));
     }
     // --- matériaux et instances ---
-    instanced(hp('floor'), floors, group);
+    if (!bakedFloor) bakedFloor = bakeTop(hp('floor'));
+    const tile = new THREE.Group(); const pl = new THREE.Mesh(new THREE.PlaneGeometry(2, 2).rotateX(-Math.PI / 2)); tile.add(pl);
+    instanced(tile, floors, group, { material: toon(null, { map: bakedFloor, color: new THREE.Color(0xd8ccc4) }) });
     instanced(hp('bricks'), bricks, group);
-    instanced(hp('floor'), ceils, group, { color: 0x6a5048 });
-    instanced(hp('floor'), ceilsLow, group, { color: 0x5a4440 });
-    instanced(hp('wall'), walls, group);
+    const ctile = new THREE.Group(); ctile.add(new THREE.Mesh(new THREE.PlaneGeometry(2, 2).rotateX(-Math.PI / 2)));
+    instanced(ctile, ceils, group, { material: toon(null, { map: bakedFloor, color: new THREE.Color(0x6a5048), side: THREE.DoubleSide }) });
+    instanced(ctile, ceilsLow, group, { material: toon(null, { map: bakedFloor, color: new THREE.Color(0x5a4440), side: THREE.DoubleSide }) });
+    // murs : un panneau plat avec la photo du mur de briques (au lieu de 1 600 triangles par panneau)
+    if (!bakedWall) bakedWall = bakeTop(hp('wall'), 256, true);
+    const wtile = new THREE.Group(); wtile.add(new THREE.Mesh(new THREE.PlaneGeometry(2, 2)));
+    instanced(wtile, walls, group, { material: toon(null, { map: bakedWall, side: THREE.DoubleSide }) });
     instanced(hp('column'), cols, group);
     instanced(hp('torch'), torchesM, group);
     instanced(hp('banner'), banners, group);
@@ -247,15 +286,16 @@ export async function create(canvas, api) {
     instanced(hp('barrel'), barrels, group);
     instanced(hp('vase'), vases, group);
     const box = new THREE.BoxGeometry(1, 1, 1);
-    const beamIM = new THREE.InstancedMesh(box, toon(null, { color: new THREE.Color(0x4a2c1c) }), beams.length);
-    beams.forEach((M, i) => beamIM.setMatrixAt(i, M)); beamIM.frustumCulled = false; group.add(beamIM);
+    const btile = new THREE.Group(); btile.add(new THREE.Mesh(box));
+    instanced(btile, beams, group, { material: toon(null, { color: new THREE.Color(0x4a2c1c) }) });
     // arches au-dessus de chaque passage de salle
     const archs = [], done = new Set();
-    for (const r of D.rooms) for (let i = 0; i < r.doors.length; i += 2) {
-      const a = r.doors[i], b = r.doors[i + 1]; if (!b) continue;
+    const DW = r0doors(D);
+    for (const r of D.rooms) for (let i = 0; i < r.doors.length; i += DW) {
+      const a = r.doors[i], b = r.doors[i + DW - 1]; if (!b) continue;
       const key = Math.min(a.x, b.x) + ',' + Math.min(a.y, b.y); if (done.has(key)) continue; done.add(key);
       const horiz = a.y === b.y;
-      archs.push(M4((a.x + b.x) / 2 + 0.5, 0, (a.y + b.y) / 2 + 0.5, 0, horiz ? 0 : Math.PI / 2, 0.52, HC / 4, 0.4));
+      archs.push(M4((a.x + b.x) / 2 + 0.5, 0, (a.y + b.y) / 2 + 0.5, 0, horiz ? 0 : Math.PI / 2, 0.26 * DW, HC / 4, 0.4));
     }
     instanced(hp('arch'), archs, group);
     // lustres : couronne de fer, chaînes, bougies
@@ -694,6 +734,7 @@ export async function create(canvas, api) {
   const bills = new Map(); // entité du jeu -> image debout (style HD 2.5D)
   let playerBill = null;
   let lastCam = api.getCamMode();
+  let targetRing = null;
   function pixelChars(G, t) {
     const p = G.p;
     if (!playerBill) playerBill = makeBill(api.hdImg, 0.32);
@@ -760,7 +801,7 @@ export async function create(canvas, api) {
       ch.scale.setScalar(0.55); g.add(ch);
       g.userData.lid = ch.getObjectByName('Chest_Top_Cylinder.007') || ch.children[1];
     } else if (kind === 'coin') {
-      const c = toonify(piece(props, 'coins').clone()); c.scale.setScalar(2.2); g.add(c);
+      const c = toonify(piece(props, 'coins').clone()); c.scale.setScalar(3.2); c.traverse((o) => { if (o.isMesh) { o.material.emissive = new THREE.Color(0x6a4a00); } }); g.add(c);
     } else if (kind === 'potion') {
       const m = toon(null, { color: new THREE.Color(0xff3a3a), emissive: new THREE.Color(0x801010) });
       const b = new THREE.Mesh(new THREE.SphereGeometry(0.13, 12, 10), m); b.position.y = 0.2; g.add(b);
@@ -776,8 +817,10 @@ export async function create(canvas, api) {
       w.scale.setScalar(0.45); w.position.y = 0.35; w.rotation.z = 0.5; g.add(w);
       const ring = new THREE.Mesh(new THREE.RingGeometry(0.18, 0.28, 24), glowMat(new THREE.Color(data.color), 0.7)); ring.rotation.x = -Math.PI / 2; ring.position.y = 0.03; g.add(ring);
     } else if (kind === 'proj') {
-      const s = new THREE.Mesh(new THREE.SphereGeometry(data.big ? 0.16 : 0.1, 12, 10), glowMat(data.big ? 0xffb03a : 0xff7a2a));
-      const c = new THREE.Mesh(new THREE.SphereGeometry(data.big ? 0.09 : 0.05, 8, 8), glowMat(0xfff2b0)); g.add(s); g.add(c);
+      const s = new THREE.Mesh(new THREE.SphereGeometry(data.big ? 0.17 : 0.15, 12, 10), glowMat(data.big ? 0xffb03a : 0xff5a2a));
+      const c = new THREE.Mesh(new THREE.SphereGeometry(data.big ? 0.09 : 0.08, 8, 8), glowMat(0xfff2b0));
+      const halo = new THREE.Mesh(new THREE.SphereGeometry(data.big ? 0.32 : 0.3, 12, 10), glowMat(data.big ? 0xffb03a : 0xff3a1a, 0.25));
+      g.add(halo); g.add(s); g.add(c);
     } else if (kind === 'portal') {
       const t = new THREE.Mesh(new THREE.TorusGeometry(0.5, 0.08, 10, 32), glowMat(0xb37cff)); t.position.y = 0.7; g.add(t);
       const d = new THREE.Mesh(new THREE.CircleGeometry(0.45, 32), glowMat(0x5a2a9a, 0.85)); d.position.y = 0.7; g.add(d);
@@ -849,6 +892,7 @@ export async function create(canvas, api) {
       // vue à la 3e personne (façon PUBG Mobile) : grand angle, le brouillard estompe le fond des grandes salles
       camera.fov = camera.aspect < 1 ? 78 : 62;
       scene.fog.near = 5; scene.fog.far = 19;
+      camera.far = 24; // au-delà, tout est dans le brouillard : inutile de le dessiner
       camera.updateProjectionMatrix();
       return;
     }
@@ -887,7 +931,8 @@ export async function create(canvas, api) {
     if (api.getState() === 'dead' || p.hp <= 0) pose(pc, 'Death_A', Math.min(1, (pc.dying += dt) / 1.2));
     else {
       pc.dying = 0;
-      if (p.hurtT > 0) pose(pc, 'Hit_A', (1 - p.hurtT / 0.25) * 0.6);
+      if (p.rolling > 0) pose(pc, 'Roll', 0.1 + (1 - p.rolling / 0.38) * 0.8);
+      else if (p.hurtT > 0) pose(pc, 'Hit_A', (1 - p.hurtT / 0.25) * 0.6);
       else if (p.cls === 'mage') {
         if (p.casting > 0) play(pc, 'Ranged_Magic_Spellcasting', 1.3);
         else if (p.castFx > 0) pose(pc, p.castFx > 0.22 ? 'Ranged_Magic_Raise' : 'Ranged_Magic_Shoot', 1 - p.castFx / 0.3);
@@ -904,6 +949,22 @@ export async function create(canvas, api) {
     }
     setGlow(pc, p.hurtT > 0.15 ? 0xff2a2a : p.casting > 0 ? 0xff8a2a : 0x000000, p.hurtT > 0.15 ? 0.6 : p.casting > 0 ? 0.25 * (1 - p.casting / p.castT) : 0);
     pc.mixer.update(dt);
+
+    // --- anneau sous l'ennemi ciblé ---
+    if (!targetRing) {
+      targetRing = new THREE.Group();
+      const m = new THREE.MeshBasicMaterial({ color: 0xff5a3a, transparent: true, opacity: 0.85, depthWrite: false, fog: false });
+      const r = new THREE.Mesh(new THREE.RingGeometry(0.4, 0.47, 40), m); r.rotation.x = -Math.PI / 2; targetRing.add(r);
+      for (let i = 0; i < 3; i++) { const tri = new THREE.Mesh(new THREE.CircleGeometry(0.09, 3), m); tri.rotation.x = -Math.PI / 2; const a = i * 2.094; tri.position.set(Math.cos(a) * 0.56, 0, Math.sin(a) * 0.56); tri.rotation.z = -a; targetRing.add(tri); }
+      targetRing.position.y = 0.04; scene.add(targetRing);
+    }
+    const tg = G.target;
+    targetRing.visible = !!(tg && !tg.dead);
+    if (targetRing.visible) {
+      const c = chars.get(tg), sz = c ? c.size / HERO_H : 1;
+      targetRing.position.set(W2(tg.x), 0.04, W2(tg.y)); targetRing.scale.setScalar(sz * (1 + Math.sin(t * 6) * 0.04)); targetRing.rotation.y = t * 1.5;
+      targetRing.children[0].material.color.setHex(tg.d.elite ? 0xffa02a : 0xff4a3a);
+    }
 
     // --- ennemis ---
     const alive = new Set();
@@ -981,8 +1042,8 @@ export async function create(canvas, api) {
     });
 
     // --- projectiles ---
-    sync(maps.proj, G.projs, 'proj', (o, pr) => o.position.set(W2(pr.x), 0.55, W2(pr.y) + 0.35), () => ({}));
-    sync(maps.fire, G.fire, 'proj', (o, f) => o.position.set(W2(f.x), 0.65, W2(f.y) + 0.45), () => ({ big: true }));
+    sync(maps.proj, G.projs, 'proj', (o, pr) => o.position.set(W2(pr.x), IN3P() ? 0.8 : 0.55, W2(pr.y) + (IN3P() ? 0.5 : 0.35)), () => ({}));
+    sync(maps.fire, G.fire, 'proj', (o, f) => o.position.set(W2(f.x), IN3P() ? 0.9 : 0.65, W2(f.y) + (IN3P() ? 0.56 : 0.45)), () => ({ big: true }));
 
     // --- télégraphes (attaques de zone du gardien) ---
     sync(maps.tele, G.tele, 'tele', (o, tl) => {
@@ -1113,5 +1174,5 @@ export async function create(canvas, api) {
   }
   // hauteur d'un personnage (pour placer barres de vie et chiffres au-dessus de sa tête)
   const charHeight = (e) => { const c = e === 'player' ? playerChar : chars.get(e); return c ? c.size : HERO_H; };
-  return { render, project, enable, setStyle, resize, heightOf: charHeight, get charScale() { return 1; }, get enabled() { return enabled; } };
+  return { get info() { return renderer.info.render; }, render, project, enable, setStyle, resize, heightOf: charHeight, get charScale() { return 1; }, get enabled() { return enabled; } };
 }
