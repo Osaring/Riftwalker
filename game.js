@@ -1,7 +1,7 @@
 /* RIFTWALKER — roguelike de donjons (V1 : le Guerrier)
    Tout le jeu tient dans ce fichier. Graphismes : 0x72 Dungeon Tileset II (CC0). */
 'use strict';
-const APP_VERSION = '1.4.1';
+const APP_VERSION = '1.5.0';
 
 // ============================================================
 // 1. OUTILS
@@ -47,6 +47,8 @@ let atlas, atlasWhite, atlasRed, atlasIce, SPR;
 let GFX = 'classic', RES = 1;
 const TWIN = new Map();          // atlas classique -> sa version agrandie 2x
 let hdImg = null, HDS = null;    // personnages détaillés (LPC)
+let envImg = null, ENV = null;   // décors détaillés (LPC 32 px)
+let iconImg = null, ICONS = null; // icônes de capacités détaillées
 const tintCache = new Map();
 async function loadAssets() {
   const [json] = await Promise.all([
@@ -65,6 +67,11 @@ async function loadAssets() {
     new Promise((res, rej) => { hdImg = new Image(); hdImg.onload = res; hdImg.onerror = rej; hdImg.src = 'assets/hd_chars.png'; }),
   ]);
   HDS = hdJson;
+  [ENV, ICONS] = await Promise.all([fetch('assets/hd_env.json').then((r) => r.json()), fetch('assets/icons_hd.json').then((r) => r.json())]);
+  await Promise.all([
+    new Promise((res, rej) => { envImg = new Image(); envImg.onload = res; envImg.onerror = rej; envImg.src = 'assets/hd_env.png'; }),
+    new Promise((res, rej) => { iconImg = new Image(); iconImg.onload = res; iconImg.onerror = rej; iconImg.src = 'assets/icons_hd.png'; }),
+  ]);
   const tint2 = (color) => { const c = document.createElement('canvas'); c.width = a2.width; c.height = a2.height; const x = c.getContext('2d'); x.drawImage(a2, 0, 0); x.globalCompositeOperation = 'source-in'; x.fillStyle = color; x.fillRect(0, 0, c.width, c.height); return c; };
   TWIN.set(atlas, a2); TWIN.set(atlasWhite, tint2('#ffffff')); TWIN.set(atlasRed, tint2('#ff3a2a')); TWIN.set(atlasIce, tint2('#bdf0ff'));
 }
@@ -546,7 +553,50 @@ function tryGenerate(floorN, seed, force) {
       for (let k = 0; k < n; k++) props.push({ x: ri(c.x, c.x + c.w - 1), y: ri(c.y, c.y + c.h - 1), s: R() < 0.7 ? 'skull' : 'crate' });
     }
   }
-  return { floorN, seed, tiles, floorVar, rooms: list, start, exit, vault, keyRoom, torches, banners, props, edges };
+  // --- décor hors zone de jeu (purement visuel) ---
+  // distance de chaque case à la zone jouable
+  const distF = new Uint8Array(MW * MH).fill(255);
+  const q2 = [];
+  for (let i = 0; i < MW * MH; i++) if (tiles[i]) { distF[i] = 0; q2.push(i); }
+  for (let h = 0; h < q2.length; h++) {
+    const i = q2[h], x = i % MW, y = (i / MW) | 0;
+    for (let dy = -1; dy <= 1; dy++) for (let dx = -1; dx <= 1; dx++) {
+      const nx = x + dx, ny = y + dy;
+      if (nx < 0 || ny < 0 || nx >= MW || ny >= MH) continue;
+      const j = ny * MW + nx;
+      if (distF[j] === 255) { distF[j] = distF[i] + 1; q2.push(j); }
+    }
+  }
+  const decor = new Uint8Array(MW * MH); // 0 sol de caverne, 1 lave, 2 gouffre, 3 roche noire
+  const kinds = floorN >= 3 ? [1, 1, 2, 3] : [1, 2, 2, 3, 3];
+  const nPools = ri(8, 14);
+  for (let k = 0; k < nPools; k++) {
+    const cx = ri(0, MW - 1), cy = ri(0, MH - 1);
+    if (distF[cy * MW + cx] < 4) continue;
+    const t = rp(kinds), rx = ri(2, 5), ry = ri(2, 4);
+    for (let y = cy - ry; y <= cy + ry; y++) for (let x = cx - rx; x <= cx + rx; x++) {
+      if (x < 0 || y < 0 || x >= MW || y >= MH) continue;
+      const dd = ((x - cx) / rx) ** 2 + ((y - cy) / ry) ** 2;
+      if (dd <= 1 + R() * 0.3 && distF[y * MW + x] >= 3) decor[y * MW + x] = t;
+    }
+  }
+  // on enlève les morceaux trop fins (érosion puis dilatation)
+  for (let pass = 0; pass < 2; pass++) {
+    const src = decor.slice();
+    for (let y = 1; y < MH - 1; y++) for (let x = 1; x < MW - 1; x++) {
+      const i = y * MW + x, t = src[i];
+      if (pass === 0 && t && !(src[i - 1] === t && src[i + 1] === t && src[i - MW] === t && src[i + MW] === t)) decor[i] = 0;
+      if (pass === 1 && !t && distF[i] >= 3) { const n = [src[i - 1], src[i + 1], src[i - MW], src[i + MW]].find((v) => v); if (n) decor[i] = n; }
+    }
+  }
+  const scatter = [], glows = [];
+  for (let y = 0; y < MH; y++) for (let x = 0; x < MW; x++) {
+    const i = y * MW + x;
+    if (tiles[i] || distF[i] < 2) continue;
+    if (!decor[i] && R() < 0.07) scatter.push({ x, y, s: rp(['boulder', 'stone', 'pebbles', 'pebbles2', 'pebbles', 'mushroom', 'bigrock']) });
+    if (decor[i] === 1 && (x + y * 3) % 7 === 0) glows.push({ x: x * TILE + 8, y: y * TILE + 8 });
+  }
+  return { floorN, seed, tiles, floorVar, rooms: list, start, exit, vault, keyRoom, torches, banners, props, edges, distF, decor, scatter, glows };
 }
 
 // ============================================================
@@ -623,6 +673,7 @@ function enterFloor(floorN, seed) {
   G.p.x = (s.x + s.w / 2) * TILE; G.p.y = (s.y + s.h / 2) * TILE + 4;
   G.cam = { x: G.p.x, y: G.p.y };
   prerenderMap();
+  G.outMask = buildOutMask(D);
   saveRun();
   if (floorN > meta.bestFloor) { meta.bestFloor = floorN; saveMeta(); }
 }
@@ -1249,17 +1300,39 @@ function prerenderMap() {
   m.fillStyle = '#07050b'; m.fillRect(0, 0, MW * TILE, MH * TILE);
   const F = (x, y) => isFloor(x, y);
   const face = (x, y) => !F(x, y) && (F(x, y + 1) || F(x, y - 1)) && x >= 0 && y >= 0 && x < MW && y < MH;
+  const HD = RES === 2;
+  drawOutside(m, D);
   for (let y = 0; y < MH; y++) for (let x = 0; x < MW; x++) {
-    if (F(x, y)) spr(m, 'floor_' + D.floorVar[y * MW + x], x * TILE, y * TILE);
+    if (!F(x, y)) continue;
+    if (HD) { const v = D.floorVar[y * MW + x]; envSpr(m, v === 5 || v === 6 ? 'floorv_' + (y % 3) : `floor_${x % 3}_${y % 3}`, x * TILE, y * TILE); }
+    else spr(m, 'floor_' + D.floorVar[y * MW + x], x * TILE, y * TILE);
   }
-  for (const pr of D.props) spr(m, pr.s, pr.x * TILE, pr.y * TILE);
+  for (const pr of D.props) {
+    if (HD && pr.s === 'crate') envSpr(m, 'barrel', pr.x * TILE, pr.y * TILE - 4);
+    else spr(m, pr.s, pr.x * TILE, pr.y * TILE);
+  }
   for (let y = 0; y < MH; y++) for (let x = 0; x < MW; x++) {
-    if (face(x, y)) {
-      const r = D.floorVar[y * MW + x];
-      spr(m, F(x, y + 1) && r === 7 ? 'wall_hole_1' : F(x, y + 1) && r === 8 ? 'wall_hole_2' : 'wall_mid', x * TILE, y * TILE);
+    if (!face(x, y)) continue;
+    if (HD) {
+      const k = !face(x - 1, y) ? 0 : !face(x + 1, y) ? 2 : 1;
+      if (F(x, y + 1)) { envSpr(m, 'wbase_' + k, x * TILE, y * TILE); if (!F(x, y - 1) && !face(x, y - 1)) envSpr(m, 'wtop_' + k, x * TILE, (y - 1) * TILE); }
+      else envSpr(m, 'wtop_' + k, x * TILE, y * TILE);
+      continue;
     }
+    const r = D.floorVar[y * MW + x];
+    spr(m, F(x, y + 1) && r === 7 ? 'wall_hole_1' : F(x, y + 1) && r === 8 ? 'wall_hole_2' : 'wall_mid', x * TILE, y * TILE);
   }
   for (const b of D.banners) spr(m, b.s, b.x * TILE, b.y * TILE);
+  if (HD) {
+    // bords latéraux des murs : liseré de pierre claire
+    for (let y = 0; y < MH; y++) for (let x = 0; x < MW; x++) {
+      if (F(x, y) || face(x, y)) continue;
+      const X = x * TILE, Y = y * TILE;
+      if (F(x + 1, y)) { m.fillStyle = '#2a2230'; m.fillRect(X + 11, Y, 1, TILE); m.fillStyle = '#9d93a3'; m.fillRect(X + 12, Y, 3, TILE); m.fillStyle = '#d6cfd8'; m.fillRect(X + 12, Y, 1, TILE); m.fillStyle = '#2a2230'; m.fillRect(X + 15, Y, 1, TILE); }
+      if (F(x - 1, y)) { m.fillStyle = '#2a2230'; m.fillRect(X, Y, 1, TILE); m.fillStyle = '#9d93a3'; m.fillRect(X + 1, Y, 3, TILE); m.fillStyle = '#d6cfd8'; m.fillRect(X + 1, Y, 1, TILE); m.fillStyle = '#2a2230'; m.fillRect(X + 4, Y, 1, TILE); }
+    }
+    return;
+  }
   for (let y = 0; y < MH; y++) for (let x = 0; x < MW; x++) {
     const v = !F(x, y);
     if (!v) continue;
@@ -1273,6 +1346,69 @@ function prerenderMap() {
       if ((F(x - 1, y + 1) || face(x - 1, y + 1)) && !F(x - 1, y) && !F(x, y + 1) && !face(x, y + 1)) spr(m, 'wall_side_top_right', x * TILE, y * TILE);
     }
   }
+}
+
+// dessine une tuile du décor détaillé (32 px) à la taille du monde (16 px par case)
+function envSpr(c, name, x, y, w, h) {
+  const r = ENV[name]; if (!r) return;
+  c.drawImage(envImg, r[0], r[1], r[2], r[3], x, y, w ?? r[2] / 2, h ?? r[3] / 2);
+}
+// Décor en dehors de la zone de jeu : caverne, lave, gouffres, rochers — assombri pour bien se distinguer
+function drawOutside(m, D) {
+  const BLOB = { 1: 'lava', 2: 'pit', 3: 'rock' };
+  const dec = (x, y) => (x < 0 || y < 0 || x >= MW || y >= MH ? 0 : D.decor[y * MW + x]);
+  for (let y = 0; y < MH; y++) for (let x = 0; x < MW; x++) {
+    const i = y * MW + x;
+    if (D.tiles[i]) continue;
+    const X = x * TILE, Y = y * TILE;
+    envSpr(m, 'cave_' + ((x * 7 + y * 13 + (x * y) % 5) % 3), X, Y);
+    const t = D.decor[i];
+    if (t) {
+      const ii = dec(x - 1, y) !== t ? 0 : dec(x + 1, y) !== t ? 2 : 1;
+      const jj = dec(x, y - 1) !== t ? 0 : dec(x, y + 1) !== t ? 2 : 1;
+      envSpr(m, `${BLOB[t]}_${ii}_${jj}`, X, Y);
+    }
+  }
+  for (const sc of D.scatter) envSpr(m, sc.s, sc.x * TILE, sc.s === 'bigrock' ? (sc.y - 1) * TILE : sc.y * TILE);
+  // voile sombre : plus on est près des murs, plus c'est sombre (la zone jouable ressort)
+  for (let y = 0; y < MH; y++) for (let x = 0; x < MW; x++) {
+    const i = y * MW + x;
+    if (D.tiles[i]) continue;
+    const d = D.distF[i];
+    let a = d <= 1 ? 0.86 : d === 2 ? 0.7 : 0.55;
+    if (D.decor[i] === 1) a -= 0.2;
+    m.fillStyle = `rgba(6,4,14,${a})`;
+    m.fillRect(x * TILE, y * TILE, TILE, TILE);
+  }
+}
+
+// Sol peint en pixel art HD pour le style « HD 2.5D » (sol de la zone de jeu, ou décor extérieur)
+function groundCanvas(kind) {
+  const D = G.D;
+  const c = document.createElement('canvas'); c.width = MW * TILE * 2; c.height = MH * TILE * 2;
+  const m = c.getContext('2d'); m.imageSmoothingEnabled = false; m.scale(2, 2); m._hd = true;
+  if (kind === 'outside') { m.fillStyle = '#100a0e'; m.fillRect(0, 0, MW * TILE, MH * TILE); drawOutside(m, D); return c; }
+  for (let y = 0; y < MH; y++) for (let x = 0; x < MW; x++) {
+    if (!isFloor(x, y)) continue;
+    const v = D.floorVar[y * MW + x];
+    envSpr(m, v === 5 || v === 6 ? 'floorv_' + (y % 3) : `floor_${x % 3}_${y % 3}`, x * TILE, y * TILE);
+  }
+  for (const pr of D.props) if (pr.s === 'skull') spr(m, 'skull', pr.x * TILE, pr.y * TILE);
+  return c;
+}
+// masque de visibilité du décor extérieur (1 pixel par case)
+function buildOutMask(D) {
+  const c = document.createElement('canvas'); c.width = MW; c.height = MH;
+  const x = c.getContext('2d'); const img = x.createImageData(MW, MH);
+  for (let i = 0; i < MW * MH; i++) {
+    if (D.tiles[i]) continue;
+    const d = D.distF[i];
+    let a = d <= 1 ? 0 : d === 2 ? 0.3 : 0.5;
+    if (D.decor[i] === 1) a = Math.min(0.75, a + 0.25);
+    img.data[i * 4 + 3] = Math.round(a * 255);
+  }
+  x.putImageData(img, 0, 0);
+  return c;
 }
 
 function render() {
@@ -1343,7 +1479,11 @@ function render() {
   // torches (sur les murs)
   for (const to of G.D.torches) {
     if (Math.abs(to.x - G.cam.x) > VW || Math.abs(to.y - G.cam.y) > VH) continue;
-    spr(ctx, 'torch_f' + (Math.floor(t * 9 + to.x) % 3), to.x - 3, to.y - 4);
+    if (RES === 2) {
+      envSpr(ctx, 'torch', to.x - 8, to.y - 17);
+      const f = Math.sin(t * 17 + to.x) > 0.3 ? 1 : 0;
+      ctx.fillStyle = '#fff2b0'; ctx.fillRect(to.x - 0.5, to.y - 15 - f, 1, 1.5);
+    } else spr(ctx, 'torch_f' + (Math.floor(t * 9 + to.x) % 3), to.x - 3, to.y - 4);
   }
   // boules de feu
   for (const f of G.fire) {
@@ -1661,7 +1801,10 @@ function drawEnemy(e) {
 function drawChest(c) {
   const fr = c.open ? Math.min(2, Math.floor(c.t / 0.1)) : 0;
   shadow(c.x, c.y, 7);
-  spr(ctx, (c.open ? 'chest_empty_open_anim_f' : 'chest_full_open_anim_f') + (c.open ? fr : 0), c.x - 8, c.y - 14);
+  if (RES === 2) {
+    envSpr(ctx, c.open && fr >= 1 ? 'chest_open' : 'chest_closed', c.x - 8, c.y - 15);
+    if (c.big && !c.open) { ctx.save(); ctx.globalAlpha = 0.25 + 0.15 * Math.sin(G.time * 4); ctx.fillStyle = '#ffd36a'; ctx.fillRect(c.x - 8, c.y - 15, 16, 16); ctx.restore(); }
+  } else spr(ctx, (c.open ? 'chest_empty_open_anim_f' : 'chest_full_open_anim_f') + (c.open ? fr : 0), c.x - 8, c.y - 14);
   if (c.big && !c.open) {
     if (Math.floor(G.time * 4) % 3 === 0) G.parts.push({ x: c.x + rand(-7, 7), y: c.y - rand(4, 14), vx: 0, vy: -10, life: 0.5, c: '#ffe58a', s: 1 });
   }
@@ -1682,7 +1825,7 @@ function drawPickup(k) {
   }
 }
 
-const LIGHT_COLORS = { ice: [150, 220, 255], player: [255, 190, 120], torch: [255, 140, 50], fire: [255, 120, 40], portal: [170, 110, 255], gold: [255, 210, 90], rare: [120, 160, 255] };
+const LIGHT_COLORS = { lava: [255, 110, 40], ice: [150, 220, 255], player: [255, 190, 120], torch: [255, 140, 50], fire: [255, 120, 40], portal: [170, 110, 255], gold: [255, 210, 90], rare: [120, 160, 255] };
 function renderLights(cx, cy) {
   const p = G.p, t = G.time;
   const lights = [];
@@ -1702,6 +1845,10 @@ function renderLights(cx, cy) {
   if (G.portal) lights.push([G.portal.x, G.portal.y - 10, 64 * Math.min(1, G.portal.t), 'portal', 0.3]);
   for (const k of G.pickups) if (k.type === 'key' || (k.type === 'weapon' && k.w.rarity >= 3)) lights.push([k.x, k.y - 6, 26, k.type === 'key' ? 'gold' : 'rare', 0.3]);
   for (const c of G.chests) if (c.big && !c.open) lights.push([c.x, c.y - 6, 30, 'gold', 0.25]);
+  for (const g of G.D.glows || []) {
+    if (Math.abs(g.x - G.cam.x) > VW / 2 + 40 || Math.abs(g.y - G.cam.y) > VH / 2 + 40) continue;
+    lights.push([g.x, g.y, 30 + Math.sin(t * 2 + g.x) * 4, 'fire', 0.1]);
+  }
   if (G.D.vault && G.D.vault.sealed) { const d = G.D.vault.doors[0]; lights.push([d.x * TILE + 8, d.y * TILE + 8, 30, 'gold', 0.2]); }
   for (const tl of G.tele) lights.push([tl.x, tl.y, tl.r + 10, 'fire', 0.25]);
 
@@ -1710,6 +1857,12 @@ function renderLights(cx, cy) {
   lctx.fillStyle = 'rgba(4,2,10,0.93)';
   lctx.fillRect(0, 0, VW, VH);
   lctx.globalCompositeOperation = 'destination-out';
+  // le décor extérieur reste faiblement visible (sans éclairer les salles inexplorées)
+  if (G.outMask) {
+    lctx.imageSmoothingEnabled = true;
+    lctx.drawImage(G.outMask, 0, 0, MW, MH, -cx, -cy, MW * TILE, MH * TILE);
+    lctx.imageSmoothingEnabled = false;
+  }
   for (const [x, y, r] of lights) {
     const lx = x - cx, ly = y - cy;
     const g = lctx.createRadialGradient(lx, ly, 0, lx, ly, r);
@@ -1812,8 +1965,22 @@ function drawIconTo(cv, fn) {
   const c = cv.getContext('2d'); c.imageSmoothingEnabled = false;
   c.clearRect(0, 0, s, s); fn(c, s);
 }
+function hdIcon(btn, name) {
+  const cv = $(btn).querySelector('canvas'); const r = ICONS[name];
+  cv.width = 48; cv.height = 48;
+  const c = cv.getContext('2d'); c.imageSmoothingEnabled = false; c.clearRect(0, 0, 48, 48);
+  c.drawImage(iconImg, r[0], r[1], r[2], r[3], 4, 4, 40, 40);
+}
 function refreshIcons() {
   const w = G ? G.p.weapon.sprite : 'weapon_regular_sword';
+  if (GFX !== 'classic' && ICONS) {
+    const mage = G && G.p.cls === 'mage';
+    hdIcon('btnAttack', mage ? 'i_fire' : 'i_attack');
+    hdIcon('btnCharge', mage ? 'i_blink' : 'i_charge');
+    hdIcon('btnWhirl', mage ? 'i_nova' : 'i_whirl');
+    hdIcon('btnPotion', 'i_potion');
+    return refreshInv(true);
+  }
   if (G && G.p.cls === 'mage') { mageIcons(); return refreshInv(); }
   drawIconTo($('btnAttack').querySelector('canvas'), (c) => { const [, , ww, wh] = sprSize(w); c.save(); c.translate(16, 16); c.rotate(0.75); const r = SPR[w]; const k = wh > 24 ? 0.8 : 1; c.drawImage(atlas, r[0], r[1], ww, wh, -ww * k / 2, -wh * k / 2, ww * k, wh * k); c.restore(); });
   drawIconTo($('btnCharge').querySelector('canvas'), (c) => {
@@ -1845,8 +2012,8 @@ function mageIcons() {
   });
   drawIconTo($('btnPotion').querySelector('canvas'), (c) => spr(c, 'flask_big_red', 8, 6));
 }
-function refreshInv() {
-  drawIconTo($('btnPotion').querySelector('canvas'), (c) => spr(c, 'flask_big_red', 8, 6));
+function refreshInv(keepPotion) {
+  if (!keepPotion) drawIconTo($('btnPotion').querySelector('canvas'), (c) => spr(c, 'flask_big_red', 8, 6));
   document.querySelectorAll('.ico').forEach((el) => {
     const r = SPR[el.dataset.sprite]; if (!r) return;
     el.style.backgroundImage = `url(assets/atlas.png)`;
@@ -1968,11 +2135,11 @@ function setupScreens() {
     document.querySelectorAll('.sfxBtn').forEach((b) => { b.textContent = 'Effets : ' + (meta.sound ? 'oui' : 'non'); });
   };
   sl();
-  const GFX_NAMES = { classic: 'Classique', hd: 'Pixel HD', cel: 'Cel-shading 3D' };
+  const GFX_NAMES = { classic: 'Classique', hd: 'Pixel HD', hd3d: 'HD 2.5D', cel: 'Cel-shading 3D' };
   const gl = () => document.querySelectorAll('.gfxBtn').forEach((b) => { b.textContent = 'Graphismes : ' + GFX_NAMES[meta.gfx]; });
   gl();
   document.querySelectorAll('.gfxBtn').forEach((b) => { b.onclick = async () => {
-    const order = ['classic', 'hd', 'cel'];
+    const order = ['classic', 'hd', 'hd3d', 'cel'];
     meta.gfx = order[(order.indexOf(meta.gfx) + 1) % order.length]; saveMeta(); gl();
     await setGfx(meta.gfx);
   }; });
@@ -2004,23 +2171,30 @@ function frame(now) {
   if (!G) { ctx.fillStyle = '#0b0712'; ctx.fillRect(0, 0, VW, VH); return; }
   if (state === 'play') { update(dt); hudFrame(); }
   else if (state === 'dead') { G.time += dt; for (const pt of G.parts) { pt.life -= dt; pt.x += pt.vx * dt; pt.y += pt.vy * dt; } }
-  if (GFX === 'cel' && R3D && R3D.enabled) { R3D.render(); renderOverlay3D(); }
+  if (is3D(GFX) && R3D && R3D.enabled) { R3D.render(); renderOverlay3D(); }
   else render();
   if (state === 'play' && Math.floor(G.time) !== hudCache.sec) { hudCache.sec = Math.floor(G.time); updateHUD(); }
 }
 
+const is3D = (m) => m === 'cel' || m === 'hd3d';
 async function setGfx(mode) {
-  if (mode === 'cel' && !(await start3D())) { toast('Le mode 3D n’a pas pu démarrer sur cet appareil', '#ff8a7a', 2.5); mode = 'classic'; meta.gfx = 'classic'; saveMeta(); }
-  if (mode !== 'cel') stop3D();
   GFX = mode;
+  if (is3D(mode) && !(await start3D())) { toast('Le mode 3D n’a pas pu démarrer sur cet appareil', '#ff8a7a', 2.5); mode = 'classic'; meta.gfx = 'classic'; saveMeta(); GFX = mode; }
+  if (!is3D(mode)) stop3D(); else R3D.setStyle(mode === 'hd3d' ? 'pixel' : 'cel');
   resize();
-  if (G && mode !== 'cel') prerenderMap();
+  if (G && !is3D(mode)) prerenderMap();
+  refreshIcons();
 }
 // le mode 3D est chargé seulement si on le choisit (fichier r3d.js)
 let R3D = null;
 async function start3D() {
   try {
-    if (!R3D) { toast('Chargement de la 3D…', '#c9a2ff', 4); const m = await import('./r3d.js'); R3D = await m.create(canvas3d(), { getGame: () => G, getState: () => state }); }
+    if (!R3D) { toast('Chargement de la 3D…', '#c9a2ff', 4); const m = await import('./r3d.js'); R3D = await m.create(canvas3d(), {
+      getGame: () => G, getState: () => state, getStyle: () => (GFX === 'hd3d' ? 'pixel' : 'cel'),
+      groundCanvas, playerKey: () => playerHDKey(G.p), enemyKey: enemyHDKey,
+      get HDS() { return HDS; }, get SPR() { return SPR; }, get ENV() { return ENV; },
+      get hdImg() { return hdImg; }, get envImg() { return envImg; }, get atlas2x() { return TWIN.get(atlas); },
+    }); }
     R3D.enable(true);
     document.body.classList.add('cel');
     return true;
@@ -2030,7 +2204,7 @@ function stop3D() { if (R3D) R3D.enable(false); document.body.classList.remove('
 function canvas3d() { let c = document.getElementById('game3d'); if (!c) { c = document.createElement('canvas'); c.id = 'game3d'; document.body.insertBefore(c, canvas.nextSibling); } return c; }
 
 async function boot() {
-  GFX = meta.gfx === 'cel' ? 'classic' : meta.gfx;
+  GFX = is3D(meta.gfx) ? 'classic' : meta.gfx;
   resize();
   try { await loadAssets(); } catch (e) { $('loading').textContent = 'Erreur de chargement. Vérifie ta connexion puis relance.'; return; }
   $('loading').classList.add('hidden');
