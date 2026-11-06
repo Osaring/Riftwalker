@@ -12,10 +12,10 @@ export async function create(canvas, api) {
   const renderer = new THREE.WebGLRenderer({ canvas, antialias: true, powerPreference: 'high-performance' });
   renderer.setPixelRatio(Math.min(window.devicePixelRatio || 1, 1.75));
   renderer.outputColorSpace = THREE.SRGBColorSpace;
-  renderer.setClearColor(0x07050b, 1);
+  renderer.setClearColor(0x0a0514, 1);
 
   const scene = new THREE.Scene();
-  scene.fog = new THREE.Fog(0x07050b, 10, 30);
+  scene.fog = new THREE.Fog(0x0a0514, 10, 30);
   const camera = new THREE.PerspectiveCamera(38, 1, 0.5, 120);
 
   // --- ombrage « dessin animé » : 3 tons francs ---
@@ -41,6 +41,9 @@ export async function create(canvas, api) {
   const playerLight = new THREE.PointLight(0xffc488, 11, 10, 1.3); scene.add(playerLight);
   const torchLights = Array.from({ length: 4 }, () => { const l = new THREE.PointLight(0xff8a3a, 0, 6, 1.6); scene.add(l); return l; });
   const fxLights = Array.from({ length: 2 }, () => { const l = new THREE.PointLight(0xff8a3a, 0, 5, 1.6); scene.add(l); return l; });
+  // lumière violette qui monte du fond de la Faille : éclaire les falaises et rochers par en dessous
+  const riftLight = new THREE.DirectionalLight(0x9a5aff, 2.2); riftLight.position.set(1, -10, 3); scene.add(riftLight);
+  const riftLight2 = new THREE.DirectionalLight(0xff6a3a, 0.8); riftLight2.position.set(-3, -10, -2); scene.add(riftLight2);
   const lavaLights = Array.from({ length: 2 }, () => { const l = new THREE.PointLight(0xff6a2a, 0, 6, 1.4); scene.add(l); return l; });
 
   // =============================================================
@@ -173,21 +176,18 @@ export async function create(canvas, api) {
     }
     for (const t of D.torches) torches.push(mat4(W2(t.x), 0.55, Math.floor(W2(t.y)) + 1.0, 0, 0.7, 0.7, 0.7));
     instanced(piece(dungeon, 'floor_tile_large'), floors, group);
-    instanced(piece(dungeon, 'floor_tile_large'), floorsB, group, { color: 0xf0e8e0 });
-    instanced(piece(dungeon, 'floor_tile_large'), floorsD, group, { color: 0xe2d6cc });
-    instanced(piece(dungeon, 'wall'), walls, group);
-    instanced(piece(dungeon, 'wall_cracked'), wallsC, group);
-    instanced(piece(dungeon, 'wall'), wallsLow, group, { color: 0x9a8f9a });
-    instanced(piece(dungeon, 'pillar'), pillars, group);
-    instanced(piece(dungeon, 'torch_mounted'), torches, group);
+    instanced(piece(dungeon, 'floor_tile_large'), floorsB, group, { color: 0xfaf6f2 });
+    instanced(piece(dungeon, 'floor_tile_large'), floorsD, group, { color: 0xf4eee8 });
+    const isl = buildIslands(G, group, false);
+    instanced(piece(dungeon, 'torch_mounted'), isl.torchMats, group);
     // crânes et tonneaux
     const skulls = [], barrels = [];
     for (const pr of D.props) (pr.s === 'skull' ? skulls : barrels).push(mat4(pr.x + 0.5, 0, pr.y + 0.5, R() * 6.28, pr.s === 'skull' ? 0.6 : 0.42, pr.s === 'skull' ? 0.6 : 0.42, pr.s === 'skull' ? 0.6 : 0.42));
     instanced(piece(props, 'skull'), skulls, group);
-    buildCelOutside(G, group, isF, R);
+
     instanced(piece(props, 'barrel'), barrels, group);
     scene.add(group);
-    level = { group, torches: D.torches.map((t) => new THREE.Vector3(W2(t.x), 0.95, Math.floor(W2(t.y)) + 1.15)), doors: new Map(), lava: (D.glows || []).map((g) => new THREE.Vector3(W2(g.x), -0.3, W2(g.y))) };
+    level = { group, isl, torches: isl.torchLights, doors: new Map(), lava: [] };
     // herses (piques) et portes scellées sur chaque passage de salle
     for (const room of D.rooms) for (const d of room.doors) {
       const key = d.x + ',' + d.y;
@@ -200,6 +200,134 @@ export async function create(canvas, api) {
       level.doors.set(key, { x: d.x, y: d.y, sp, gate, h: -0.7 });
     }
     levelKey = D.seed + ':' + G.floorN + ':' + style;
+  }
+
+  // =============================================================
+  // ÎLOTS FLOTTANTS : chaque salle et chaque pont est un bloc de roche suspendu au-dessus de la Faille
+  // =============================================================
+  function buildIslands(G, group, pix) {
+    const D = G.D, MW = G.MW, MH = G.MH;
+    const isF = (x, y) => x >= 0 && y >= 0 && x < MW && y < MH && D.tiles[y * MW + x] === 1;
+    let rnd = (D.seed ^ 0x5bd1e995) >>> 0;
+    const R = () => ((rnd = (rnd * 1664525 + 1013904223) >>> 0) / 4294967296);
+    // distance de chaque case de sol jusqu'au bord : le dessous de l'îlot est plus profond au centre (forme effilée)
+    const dIn = new Uint8Array(MW * MH);
+    const q = [];
+    for (let y = 0; y < MH; y++) for (let x = 0; x < MW; x++) {
+      if (!isF(x, y)) continue;
+      if (!isF(x - 1, y) || !isF(x + 1, y) || !isF(x, y - 1) || !isF(x, y + 1)) { dIn[y * MW + x] = 1; q.push(y * MW + x); }
+    }
+    for (let h = 0; h < q.length; h++) {
+      const i = q[h], x = i % MW, y = (i / MW) | 0;
+      for (const [dx, dy] of [[1, 0], [-1, 0], [0, 1], [0, -1]]) {
+        const nx = x + dx, ny = y + dy, j = ny * MW + nx;
+        if (isF(nx, ny) && !dIn[j]) { dIn[j] = dIn[i] + 1; q.push(j); }
+      }
+    }
+    // --- matériaux ---
+    const canvasTex = (cv) => { const t = new THREE.CanvasTexture(cv); t.magFilter = t.minFilter = THREE.NearestFilter; t.generateMipmaps = false; t.colorSpace = THREE.SRGBColorSpace; return t; };
+    const draw = (w, h, fn) => { const c = document.createElement('canvas'); c.width = w; c.height = h; const x = c.getContext('2d'); x.imageSmoothingEnabled = false; fn(x); return canvasTex(c); };
+    const E = (x, name, dx, dy) => { const r = api.ENV[name]; if (r) x.drawImage(api.envImg, r[0], r[1], r[2], r[3], dx, dy, r[2], r[3]); };
+    let underMat, parMat, rockMat;
+    if (pix) {
+      // falaise : terre en haut, roche dessous, de plus en plus sombre vers le bas
+      const cliff = draw(32, 64, (x) => {
+        E(x, 'rock_1_1', 0, 8); E(x, 'rock_1_1', 0, 40); E(x, 'cave_1', 0, -20);
+        const g = x.createLinearGradient(0, 0, 0, 64); g.addColorStop(0, 'rgba(10,6,20,0)'); g.addColorStop(1, 'rgba(10,6,20,.85)');
+        x.fillStyle = g; x.fillRect(0, 0, 32, 64);
+        x.fillStyle = '#9d93a3'; x.fillRect(0, 0, 32, 2); x.fillStyle = '#2a2230'; x.fillRect(0, 2, 32, 1);
+      });
+      underMat = new THREE.MeshLambertMaterial({ map: cliff, emissive: 0x140a24 });
+      parMat = new THREE.MeshLambertMaterial({ map: draw(32, 16, (x) => { const r = api.ENV['wface_1']; x.drawImage(api.envImg, r[0], r[1], 32, 16, 0, 0, 32, 16); }) });
+      rockMat = new THREE.MeshLambertMaterial({ map: draw(32, 32, (x) => E(x, 'rock_1_1', 0, 0)), flatShading: true, emissive: 0x1a0c2e });
+    } else {
+      underMat = toon(null, { color: new THREE.Color(0x6a5262), emissive: new THREE.Color(0x140a24) });
+      parMat = toon(null, { color: new THREE.Color(0xa89cb0) });
+      rockMat = toon(null, { color: new THREE.Color(0x5a4a66), emissive: new THREE.Color(0x1a0c2e) });
+      rockMat.flatShading = true;
+    }
+    const box = new THREE.BoxGeometry(1, 1, 1);
+    const inst = (geo, mat, arr) => { if (!arr.length) return null; const im = new THREE.InstancedMesh(geo, mat, arr.length); arr.forEach((M, i) => im.setMatrixAt(i, M)); im.frustumCulled = false; group.add(im); return im; };
+    // --- dessous rocheux de chaque case de sol ---
+    const under = [];
+    for (let y = 0; y < MH; y++) for (let x = 0; x < MW; x++) {
+      if (!isF(x, y)) continue;
+      const d = 0.45 + Math.min(dIn[y * MW + x], 6) * 0.55 + R() * 0.35;
+      under.push(mat4(x + 0.5, -d / 2 - 0.04, y + 0.5, 0, 1, d, 1));
+    }
+    inst(box, underMat, under);
+    // --- parapets en ruine le long des bords ---
+    const par = [];
+    for (let y = 0; y < MH; y++) for (let x = 0; x < MW; x++) {
+      if (!isF(x, y)) continue;
+      for (const [dx, dy] of [[0, -1], [0, 1], [-1, 0], [1, 0]]) {
+        if (isF(x + dx, y + dy) || R() < 0.3) continue;
+        const h = 0.16 + R() * 0.24, th = 0.18;
+        const cx = x + 0.5 + dx * (0.5 - th / 2), cz = y + 0.5 + dy * (0.5 - th / 2);
+        par.push(mat4(cx, h / 2, cz, 0, dx ? th : 1, h, dy ? th : 1));
+      }
+    }
+    inst(box, parMat, par);
+    // --- piédestaux des torches (au bord nord des salles) ---
+    const torchSpots = [], torchLights = [], torchMats = [], ped = [];
+    for (const t of D.torches) {
+      const tx = W2(t.x), tz = Math.floor(W2(t.y)) + 1.22;
+      ped.push(mat4(tx, 0.2, tz, 0, 0.3, 0.4, 0.3));
+      torchSpots.push({ x: tx, z: tz + 0.02 });
+      torchLights.push(new THREE.Vector3(tx, 1.15, tz + 0.25));
+      torchMats.push(mat4(tx, 0.4, tz + 0.12, 0, 0.6, 0.6, 0.6));
+    }
+    inst(box, parMat, ped);
+    // --- rochers flottants dans le vide ---
+    const rocks = [];
+    for (let y = 0; y < MH; y++) for (let x = 0; x < MW; x++) {
+      const i = y * MW + x;
+      if (D.tiles[i] || D.distF[i] < 2) continue;
+      if (R() < (D.decor[i] === 3 ? 0.18 : 0.035)) rocks.push({ x: x + R(), y: -1.0 - R() * 5.5, z: y + R(), s: 0.25 + R() * 0.8, rx: R() * 6, ry: R() * 6, ph: R() * 6.28 });
+    }
+    const rockGeo = new THREE.DodecahedronGeometry(1, 0);
+    const rockIM = inst(rockGeo, rockMat, rocks.map(() => new THREE.Matrix4()));
+    // --- le fond de la Faille : lave lointaine et lueurs violettes ---
+    const deep = new THREE.Mesh(new THREE.PlaneGeometry(MW + 80, MH + 80), new THREE.MeshBasicMaterial({ color: 0x0a0514, fog: false }));
+    deep.rotation.x = -Math.PI / 2; deep.position.set(MW / 2, -16, MH / 2); group.add(deep);
+    const glowTex = draw(64, 64, (x) => { const g = x.createRadialGradient(32, 32, 0, 32, 32, 32); g.addColorStop(0, 'rgba(255,255,255,1)'); g.addColorStop(1, 'rgba(255,255,255,0)'); x.fillStyle = g; x.fillRect(0, 0, 64, 64); });
+    glowTex.magFilter = glowTex.minFilter = THREE.LinearFilter;
+    const glows = [];
+    for (let y = 0; y < MH; y += 2) for (let x = 0; x < MW; x += 2) {
+      const i = y * MW + x;
+      if (D.tiles[i]) continue;
+      if (D.decor[i] === 1) glows.push([x, y, 0xff5a1a, 3 + R() * 3, -8]);
+      else if (D.decor[i] === 2 && R() < 0.6) glows.push([x, y, 0x8a3aff, 4 + R() * 4, -9]);
+      else if (R() < 0.08) glows.push([x, y, 0x7a3ae0, 4 + R() * 5, -10]);
+    }
+    for (const [x, y, c, sz, h] of glows) {
+      const m = new THREE.Mesh(PLANE, new THREE.MeshBasicMaterial({ map: glowTex, color: c, transparent: true, opacity: 0.75, depthWrite: false, blending: THREE.AdditiveBlending, fog: false }));
+      m.rotation.x = -Math.PI / 2; m.scale.set(sz, sz, 1); m.position.set(x, h, y); group.add(m);
+    }
+    // --- poussière de la Faille qui remonte ---
+    const NM = 220, mGeo = new THREE.BufferGeometry(), mPos = new Float32Array(NM * 3), mBase = [];
+    for (let k = 0; k < NM; k++) { const x = R() * MW, z = R() * MH; mBase.push([x, -8 * R(), z, 0.3 + R() * 0.6]); }
+    mGeo.setAttribute('position', new THREE.BufferAttribute(mPos, 3));
+    const motes = new THREE.Points(mGeo, new THREE.PointsMaterial({ color: 0xc9a2ff, size: 0.1, transparent: true, opacity: 0.8, depthWrite: false, blending: THREE.AdditiveBlending, fog: false }));
+    motes.frustumCulled = false; group.add(motes);
+    return { torchSpots, torchLights, torchMats, rocks, rockIM, motes, mBase, mPos };
+  }
+  const tmpM = new THREE.Matrix4(), tmpQ = new THREE.Quaternion(), tmpE = new THREE.Euler(), tmpS = new THREE.Vector3(), tmpP = new THREE.Vector3();
+  function animIslands(isl, t) {
+    if (isl.rockIM) {
+      isl.rocks.forEach((r, i) => {
+        tmpP.set(r.x, r.y + Math.sin(t * 0.6 + r.ph) * 0.18, r.z);
+        tmpQ.setFromEuler(tmpE.set(r.rx + t * 0.05, r.ry + t * 0.08, 0)); tmpS.set(r.s, r.s * 0.7, r.s);
+        isl.rockIM.setMatrixAt(i, tmpM.compose(tmpP, tmpQ, tmpS));
+      });
+      isl.rockIM.instanceMatrix.needsUpdate = true;
+    }
+    for (let k = 0; k < isl.mBase.length; k++) {
+      const b = isl.mBase[k];
+      const y = -9 + ((b[1] + 9 + t * b[3]) % 9);
+      isl.mPos[k * 3] = b[0] + Math.sin(t * 0.5 + k) * 0.3; isl.mPos[k * 3 + 1] = y; isl.mPos[k * 3 + 2] = b[2];
+    }
+    isl.motes.geometry.attributes.position.needsUpdate = true;
   }
 
   // Décor extérieur en cel-shading : sol en contrebas, lave, gouffres, roches, colonnes brisées
@@ -245,51 +373,16 @@ export async function create(canvas, api) {
       const m = new THREE.Mesh(new THREE.PlaneGeometry(MW, MH), mat);
       m.rotation.x = -Math.PI / 2; m.position.set(MW / 2, y, MH / 2); group.add(m);
     };
-    plane(api.groundCanvas('outside'), -0.75, false);
     plane(api.groundCanvas('floor'), 0, true);
-    // textures des murs (pierre du château)
-    const crop = (name, dark) => {
-      const r = api.ENV[name], c = document.createElement('canvas'); c.width = 32; c.height = 32;
-      const x = c.getContext('2d'); x.imageSmoothingEnabled = false; x.drawImage(api.envImg, r[0], r[1], 32, 32, 0, 0, 32, 32);
-      if (dark) { x.fillStyle = `rgba(10,6,16,${dark})`; x.fillRect(0, 0, 32, 32); }
-      return canvasTex(c);
-    };
-    const draw = (w, h, fn) => { const c = document.createElement('canvas'); c.width = w; c.height = h; const x = c.getContext('2d'); x.imageSmoothingEnabled = false; fn(x); return canvasTex(c); };
-    const E = (x, name, dx, dy) => { const r = api.ENV[name]; x.drawImage(api.envImg, r[0], r[1], r[2], r[3], dx, dy, r[2], r[3]); };
-    // face du mur : 1,5 case de haut (pierre + base)
-    const frontTex = draw(32, 48, (x) => { E(x, 'wface_1', 0, 0); E(x, 'wbase_1', 0, 16); });
-    const sideTex = draw(32, 48, (x) => { E(x, 'wface_1', 0, 0); E(x, 'wface_1', 0, 24); x.fillStyle = 'rgba(10,6,16,.35)'; x.fillRect(0, 0, 32, 48); });
-    // dessus du mur : pierre sombre avec un liseré clair (on voit tout de suite que c'est un mur)
-    const topTex = draw(32, 32, (x) => {
-      E(x, 'rock_1_1', 0, 0); x.fillStyle = 'rgba(20,14,26,.45)'; x.fillRect(0, 0, 32, 32);
-      x.fillStyle = 'rgba(157,147,163,.35)'; x.fillRect(0, 0, 32, 1);
-    });
-    const side = new THREE.MeshLambertMaterial({ map: sideTex });
-    const front = new THREE.MeshLambertMaterial({ map: frontTex });
-    const top = new THREE.MeshLambertMaterial({ map: topTex });
-    const mats = [side, side, top, top, front, side]; // +x, -x, +y, -y, +z (vers la caméra), -z
-    const tall = [], low = [];
-    for (let y = 0; y < MH; y++) for (let x = 0; x < MW; x++) {
-      const i = y * MW + x;
-      if (D.tiles[i] || D.distF[i] !== 1) continue;
-      const southWall = isF(x, y - 1) || isF(x - 1, y - 1) && isF(x + 1, y - 1);
-      const h = southWall ? 0.35 : 1.5;
-      (southWall ? low : tall).push(mat4(x + 0.5, (h - 0.75) / 2, y + 0.5, 0, 1, h + 0.75, 1));
-    }
-    const geo = new THREE.BoxGeometry(1, 1, 1);
-    for (const arr of [tall, low]) {
-      if (!arr.length) continue;
-      const im = new THREE.InstancedMesh(geo, mats, arr.length);
-      arr.forEach((M, i) => im.setMatrixAt(i, M)); im.frustumCulled = false; group.add(im);
-    }
     scene.add(group);
-    // torches murales
+    const isl = buildIslands(G, group, true);
+    // torches sur leurs piédestaux
     const torches = [];
-    for (const t of D.torches) {
+    for (const tp of isl.torchSpots) {
       const b = makeBill(api.envImg, 0); frameEnv(b, 'torch', 0.75);
-      b.g.position.set(W2(t.x), 0.55, Math.floor(W2(t.y)) + 1.04); group.add(b.g); torches.push(b);
+      b.g.position.set(tp.x, 0.42, tp.z); group.add(b.g); torches.push(b);
     }
-    level = { group, torches: D.torches.map((t) => new THREE.Vector3(W2(t.x), 1.0, Math.floor(W2(t.y)) + 1.3)), torchBills: torches, doors: new Map(), lava: (D.glows || []).map((g) => new THREE.Vector3(W2(g.x), -0.3, W2(g.y))) };
+    level = { group, isl, torches: isl.torchLights, torchBills: torches, doors: new Map(), lava: [] };
     // herses : piques au sol quand la salle est verrouillée ; portes scellées dorées
     for (const room of D.rooms) for (const d of room.doors) {
       const key = d.x + ',' + d.y;
@@ -504,7 +597,7 @@ export async function create(canvas, api) {
     camera.aspect = w / h;
     const tanH = Math.tan(THREE.MathUtils.degToRad(camera.fov / 2));
     camDist = camera.aspect < 1 ? 3.9 / (tanH * camera.aspect) : 3.5 / tanH;
-    scene.fog.near = camDist * 0.85; scene.fog.far = camDist * 1.55;
+    scene.fog.near = camDist * 0.9; scene.fog.far = camDist * 1.9;
     camera.updateProjectionMatrix();
   }
   window.addEventListener('resize', resize);
@@ -694,6 +787,8 @@ export async function create(canvas, api) {
     lavaLights.forEach((l, i) => { const it = nearLava[i]; if (it && it[1] < 250) { l.position.copy(it[0]); l.intensity = 4 + Math.sin(t * 2 + i) * 0.8; } else l.intensity = 0; });
     fxLights.forEach((l, i) => { const h = hot[i]; if (h) { l.position.set(W2(h[0]), 0.9, W2(h[1])); l.color.setHex(h[2]); l.intensity = h[3]; } else l.intensity = 0; });
 
+    if (level.isl) animIslands(level.isl, t);
+    riftLight.intensity = PIX() ? 2.2 : 0.9; riftLight2.intensity = PIX() ? 0.8 : 0.4;
     // --- caméra ---
     camT.set(W2(G.cam.x), 0, W2(G.cam.y) + 0.4);
     const sh = G.shake * 0.012;
