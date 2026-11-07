@@ -11,126 +11,104 @@
 <title>Riftwalker</title>
 <link rel="manifest" href="manifest.json">
 <link rel="apple-touch-icon" href="assets/icon-180.png">
-<link rel="icon" href="assets/icon-192.png">
 <link rel="stylesheet" href="style.css">
-<script type="importmap">{ "imports": { "three": "./vendor/three.module.min.js" } }</script>
+<script type="importmap">{ "imports": { "three": "./vendor/three.module.min.js", "three/addons/": "./vendor/jsm/" } }</script>
 </head>
 <body>
-<canvas id="game"></canvas>
+<canvas id="view"></canvas>
+<canvas id="overlay"></canvas>
 
-<!-- HUD -->
+<!-- ===== HUD ===== -->
 <div id="hud" class="hidden">
-  <div id="frame">
-    <div class="bar hp"><div class="fill" id="hpFill"></div><span id="hpText">100 / 100</span></div>
-    <div class="bar rage" id="resBar"><div class="fill" id="rageFill"></div><span id="rageText">0 rage</span></div>
-    <div id="infos">
-      <span id="floorLabel">Étage 1</span>
-      <span class="inv"><canvas class="ico2" data-icon="i_coin"></canvas><b id="goldText">0</b></span>
-      <span class="inv" id="keyInv"><canvas class="ico2" data-icon="i_key"></canvas><b id="keyText">0</b></span>
+  <div id="stickZone"></div>
+  <div id="camZone"></div>
+  <div id="stickBase"><div id="stickKnob"></div></div>
+
+  <div id="topLeft">
+    <div id="lvlBadge">1</div>
+    <div class="bars">
+      <div class="bar hp"><div class="fill"></div><span></span></div>
+      <div class="bar rage"><div class="fill"></div><span></span></div>
     </div>
   </div>
+  <div id="floorTag"></div>
   <div id="topRight">
-    <canvas id="minimap"></canvas>
-    <button id="pauseBtn" aria-label="Pause">II</button>
+    <canvas id="minimap" width="120" height="120"></canvas>
+    <div class="col">
+      <button id="pauseBtn" class="round" aria-label="Pause">❚❚</button>
+      <button id="bagBtn" class="round" aria-label="Héros"><canvas class="ico" data-icon="i_bag"></canvas><i id="bagDot"></i></button>
+    </div>
   </div>
-  <div id="toast"></div>
-  <div id="camZone"></div>
-  <div id="stickZone"><div id="stickBase"><div id="stickKnob"></div></div></div>
+  <div id="loot"></div>
+  <div id="xpBar"><div class="fill"></div></div>
+
   <div id="actions">
-    <button class="act small" id="btnRoll" data-label="Roulade"><canvas></canvas><span class="cd"></span></button>
-    <button class="act" id="btnPotion" data-label="Potion"><canvas></canvas><span class="cd"></span><b class="count" id="potionCount">0</b></button>
-    <button class="act" id="btnWhirl" data-label="Tourbillon"><canvas></canvas><span class="cd"></span><b class="cost" id="costWhirl">35</b></button>
-    <button class="act" id="btnCharge" data-label="Charge"><canvas></canvas><span class="cd"></span><b class="cost" id="costCharge"></b></button>
-    <button class="act big" id="btnAttack" data-label="Frappe"><canvas></canvas><span class="cd"></span><b class="cost" id="costAttack"></b></button>
+    <button class="act big" data-act="attack" id="btnAttack"><canvas class="ico" data-icon="i_attack"></canvas></button>
+    <button class="act" data-act="skill1" id="btnSkill1"><canvas class="ico" data-icon="i_charge"></canvas><b class="cd"></b><i class="cost"></i></button>
+    <button class="act" data-act="skill2" id="btnSkill2"><canvas class="ico" data-icon="i_whirl"></canvas><b class="cd"></b><i class="cost">30</i></button>
+    <button class="act" data-act="skill3" id="btnSkill3"><canvas class="ico" data-icon="i_shout"></canvas><b class="cd"></b><i class="lock">Niv. 3</i></button>
+    <button class="act small" data-act="roll" id="btnRoll"><canvas class="ico" data-icon="i_roll"></canvas><b class="cd"></b></button>
+    <button class="act small" data-act="potion" id="btnPotion"><canvas class="ico" data-icon="i_potion"></canvas><b class="cd"></b><i class="count">3</i></button>
   </div>
 </div>
 
-<!-- Écrans -->
+<!-- ===== ÉCRANS ===== -->
+<div id="loading" class="screen show">
+  <div class="logo">RIFTWALKER</div>
+  <div class="loadbar"><div id="loadFill"></div></div>
+  <p id="loadText">Chargement…</p>
+</div>
+
 <div id="title" class="screen">
-  <div class="rift"></div>
-  <h1>RIFTWALKER</h1>
-  <p class="sub">Arpente les failles. Survis aux profondeurs.</p>
-  <p class="tap">Touche l'écran pour la musique</p>
+  <div class="logo big">RIFTWALKER</div>
+  <p class="tagline">Les failles s'ouvrent sous la crypte. Descends.</p>
   <div class="menu">
-    <button id="continueBtn" class="hidden">Continuer</button>
-    <button id="newBtn">Nouvelle expédition</button>
-    <button id="helpBtn" class="ghost">Comment jouer</button>
-    <div class="row"><button class="ghost musicBtn">Musique</button><button class="ghost sfxBtn">Effets</button></div>
+    <button id="playBtn" class="primary">Jouer</button>
+    <button id="heroBtnTitle">Héros</button>
+    <div class="row"><button id="soundBtn" class="ghost">Sons : oui</button><button id="musicBtn" class="ghost">Musique : oui</button></div>
   </div>
-  <p class="stats" id="titleStats"></p>
-  <p class="credit">Graphismes : 0x72 (CC0), LPC (CC-BY-SA/GPL, voir CREDITS-LPC), Kay Lousberg & Quaternius (CC0), icônes game-icons.net (CC BY) · <span id="versionLabel"></span></p>
+  <p id="titleStats" class="stats"></p>
+  <p class="credit">Modèles 3D : Quaternius & Kay Lousberg (CC0) · Icônes : game-icons.net (CC BY 3.0) · <span id="versionLabel"></span></p>
 </div>
 
-<div id="help" class="screen hidden">
-  <h2>Comment jouer</h2>
-  <ul>
-    <li><b>Déplacement :</b> pose ton pouce n'importe où sur la moitié gauche de l'écran. Garde le gros bouton appuyé pour attaquer en continu.</li>
-    <li><b>Cible :</b> tes attaques visent l'ennemi le plus proche <b>devant toi</b> (son nom et sa vie s'affichent en haut). En combat, la caméra le garde dans le cadre.</li>
-    <li><b>Roulade :</b> le petit bouton vert. Tu bondis dans la direction du joystick (ou en arrière) et tu es <span class="b">intouchable</span> pendant le geste.</li>
-    <li><b>Flèches rouges</b> au bord de l'écran : un ennemi hors de vue prépare un coup. Roule ou tourne-toi !</li>
-    <li class="cls">Guerrier</li>
-    <li><b>Frappe :</b> attaque à l'épée. Chaque coup réussi remplit ta <span class="r">rage</span>.</li>
-    <li><b>Charge :</b> fonce sur l'ennemi le plus proche et l'étourdit. Donne de la rage.</li>
-    <li><b>Tourbillon :</b> coûte 35 de rage, frappe tout autour de toi.</li>
-    <li class="cls">Mage</li>
-    <li><b>Boule de feu :</b> reste immobile le temps de l'incantation. Si tu bouges, le sort est <span class="r">interrompu</span>. Elle explose et enflamme les ennemis.</li>
-    <li><b>Transfert :</b> téléportation dans la direction du joystick (ou loin du danger).</li>
-    <li><b>Nova de givre :</b> gèle les ennemis autour de toi. Une boule de feu sur un ennemi gelé est <span class="b">toujours critique</span>.</li>
-    <li>Ton <span class="b">mana</span> remonte tout seul, plus vite hors combat.</li>
-    <li class="cls">Caméra</li>
-    <li>Le joystick suit la caméra : vers le haut = droit devant toi. Glisse le doigt sur la droite de l'écran pour tourner la caméra et regarder plus haut ou plus bas, comme sur PUBG Mobile. En combat, si tu la tournes toi-même, elle te laisse la main quelques secondes.</li>
-    <li class="cls">Conseils</li>
-    <li>Quand un ennemi <span class="r">clignote en rouge</span>, il prépare un coup : éloigne-toi !</li>
-    <li>Les salles se verrouillent tant que les monstres sont en vie.</li>
-    <li>Trouve la <span class="y">clé</span> pour ouvrir la salle scellée et son trésor.</li>
-    <li>Méfie-toi des coffres… certains mordent.</li>
-    <li>Bats le gardien, puis entre dans la <span class="p">faille</span> pour descendre.</li>
-  </ul>
-  <button id="helpBack">Retour</button>
-</div>
-
-<div id="classSel" class="screen hidden">
-  <h2>Choisis ta classe</h2>
-  <div class="cards">
-    <button class="classCard" data-cls="warrior">
-      <canvas data-portrait="knight_m"></canvas>
-      <b>Guerrier</b>
-      <span class="role r">Corps à corps · Rage</span>
-      <span>Solide (100 PV). Frappe, Charge et Tourbillon. Plus il se bat, plus il devient dangereux.</span>
-    </button>
-    <button class="classCard" data-cls="mage">
-      <canvas data-portrait="wizzard_m"></canvas>
-      <b>Mage</b>
-      <span class="role b">Distance · Mana</span>
-      <span>Fragile (75 PV). Boules de feu à incanter, Transfert et Nova de givre. Gèle, puis brise !</span>
-    </button>
+<div id="hero" class="screen">
+  <div class="heroTop">
+    <div class="tabs"><button data-tab="gear" class="on">Équipement</button><button data-tab="skills">Compétences <i id="ptsDot"></i></button><button data-tab="shop">Marchand</button></div>
+    <div class="money"><canvas class="ico" data-icon="i_coin"></canvas><b id="goldText">0</b></div>
+    <button id="heroClose" class="round">✕</button>
   </div>
-  <button id="classBack" class="ghost">Retour</button>
+  <div class="tab show" id="tab-gear">
+    <div class="paper">
+      <div class="slots left" id="slotsL"></div>
+      <div class="preview"><div id="statsBox"></div></div>
+      <div class="slots right" id="slotsR"></div>
+    </div>
+    <div class="bagWrap"><h3>Sac <small id="bagCount"></small></h3><div id="bag"></div></div>
+  </div>
+  <div class="tab" id="tab-skills"><p class="hint" id="ptsText"></p><div id="skillList"></div></div>
+  <div class="tab" id="tab-shop"><div id="shopList"></div><h3>Vendre</h3><p class="hint">Touche un objet de ton sac pour le vendre.</p><div id="sellBag"></div></div>
+  <div id="tooltip" class="hidden"></div>
+  <div class="heroBottom"><button id="enterBtn" class="primary">Entrer dans le donjon</button></div>
 </div>
 
-<div id="pause" class="screen hidden">
+<div id="pause" class="screen">
   <h2>Pause</h2>
   <div class="menu">
-    <button id="resumeBtn">Reprendre</button>
-    <div class="row"><button class="ghost musicBtn">Musique</button><button class="ghost sfxBtn">Effets</button></div>
-    <button id="quitBtn" class="ghost">Abandonner l'expédition</button>
+    <button id="resumeBtn" class="primary">Reprendre</button>
+    <button id="heroBtnPause">Héros</button>
+    <button id="quitBtn" class="ghost">Retour au menu</button>
   </div>
 </div>
 
-<div id="death" class="screen hidden">
-  <h2 class="red">Tu es tombé</h2>
+<div id="death" class="screen">
+  <h2 class="red">Vaincu…</h2>
   <p id="deathText"></p>
-  <div class="menu"><button id="retryBtn">Nouvelle expédition</button><button id="menuBtn" class="ghost">Menu</button></div>
+  <div class="menu"><button id="retryBtn" class="primary">Revenir au début de l'étage</button><button id="deathHero">Héros</button></div>
 </div>
 
-<div id="updateBar" class="hidden">
-  <div><b>Nouvelle version</b><br><span id="updateNotes"></span></div>
-  <button id="updateBtn">Mettre à jour</button>
-</div>
+<div id="banner"></div>
+<div id="updateBar" class="hidden"><span><b>Nouvelle version</b> du jeu disponible</span><button id="updateBtn">Mettre à jour</button></div>
 
-<div id="fade"></div>
-<div id="loading">Chargement…</div>
-
-<script src="game.js"></script>
+<script type="module" src="js/main.js"></script>
 </body>
 </html>

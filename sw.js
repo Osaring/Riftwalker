@@ -1,13 +1,14 @@
 // Service worker : garde une copie du jeu dans le téléphone pour jouer hors ligne.
-// À chaque mise à jour, changer VERSION ici + APP_VERSION dans game.js + version.json.
-const VERSION = 'riftwalker-1.11.0';
+// À chaque mise à jour, changer VERSION ici + APP_VERSION dans js/main.js + version.json.
+const VERSION = 'riftwalker-2.0.0';
 const FILES = [
-  './', 'index.html', 'style.css', 'game.js', 'manifest.json',
-  'assets/atlas.png', 'assets/atlas.json',
-  'assets/icon-180.png', 'assets/icon-192.png', 'assets/icon-512.png',
-  'assets/fonts/pixelify-sans-latin-400-normal.woff2', 'assets/fonts/pixelify-sans-latin-700-normal.woff2', 'assets/fonts/nunito-latin-700-normal.woff2', 'assets/fonts/nunito-latin-900-normal.woff2',
-  'assets/atlas2x.png', 'assets/hd_chars.png', 'assets/hd_chars.json', 'assets/hd_env.png', 'assets/hd_env.json', 'assets/icons_hd.png', 'assets/icons_hd.json',
-  'r3d.js', 'vendor/three.module.min.js', 'vendor/jsm/loaders/GLTFLoader.js', 'vendor/jsm/utils/BufferGeometryUtils.js', 'vendor/jsm/utils/SkeletonUtils.js', 'assets/3d/dungeon.glb', 'assets/3d/hall.glb', 'assets/3d/humans.glb', 'assets/3d/anim_human.glb', 'assets/3d/props.glb',
+  './', 'index.html', 'style.css', 'manifest.json',
+  'js/main.js', 'js/assets.js', 'js/character.js', 'js/level.js', 'js/world.js', 'js/items.js', 'js/audio.js', 'js/input.js', 'js/ui.js', 'js/util.js',
+  'vendor/three.module.min.js', 'vendor/jsm/loaders/GLTFLoader.js', 'vendor/jsm/utils/BufferGeometryUtils.js', 'vendor/jsm/utils/SkeletonUtils.js',
+  'assets/3d/gear.glb', 'assets/3d/anim.glb', 'assets/3d/hall.glb', 'assets/3d/nature.glb', 'assets/3d/props.glb',
+  'assets/tex/T_Knight_2_BaseColor.jpg', 'assets/tex/T_Knight_3_BaseColor.jpg', 'assets/tex/T_Noble_2_BaseColor.jpg', 'assets/tex/T_Noble_3_BaseColor.jpg', 'assets/tex/T_Wizard_2_BaseColor.jpg', 'assets/tex/T_Wizard_3_BaseColor.jpg',
+  'assets/icons_hd.png', 'assets/icons_hd.json', 'assets/icon-180.png', 'assets/icon-192.png', 'assets/icon-512.png',
+  'assets/fonts/nunito-latin-700-normal.woff2', 'assets/fonts/nunito-latin-900-normal.woff2',
 ];
 
 self.addEventListener('install', (e) => {
