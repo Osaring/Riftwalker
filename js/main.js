@@ -6,14 +6,14 @@ import * as THREE from 'three';
 import { loadAll, scene as piece } from './assets.js';
 import { Character, HERO_H } from './character.js';
 import { generateLevel, walkable, groundAt, ceilAt, moveCircle, lineFree } from './level.js';
-import { buildWorld, glowTexture } from './world.js';
+import { buildWorld, glowTexture, cutout } from './world.js';
 import { SLOTS, RARITY, randomDrop, makeItem, starterGear, looksOf, rollRarity } from './items.js';
 import { SFX, unlock, settings, applyVolumes, setMusic, musicTick } from './audio.js';
 import { input, setupInput, consume } from './input.js';
 import * as UI from './ui.js';
 import { R, clamp, lerp, damp, angWrap, angDiff, store, $ } from './util.js';
 
-export const APP_VERSION = '2.1.0';
+export const APP_VERSION = '3.0.0';
 
 // ---------------------------------------------------------------
 // MOTEUR 3D
@@ -27,17 +27,18 @@ const res = { max: Math.min(DPR, 1.6), min: Math.min(DPR, 0.85), cur: Math.min(D
 renderer.setPixelRatio(res.cur);
 renderer.outputColorSpace = THREE.SRGBColorSpace;
 renderer.toneMapping = THREE.ACESFilmicToneMapping;
-renderer.toneMappingExposure = 1.15;
+renderer.toneMappingExposure = 1.25;
 const scene3 = new THREE.Scene();
 scene3.fog = new THREE.Fog(0x120c1c, 10, 42);
 const hemi = new THREE.HemisphereLight(0x8a90ff, 0x3a2030, 1.2); scene3.add(hemi);
-const moon = new THREE.DirectionalLight(0xb8a8ff, 0.55); moon.position.set(-0.4, 1, 0.3); scene3.add(moon);
-const camera = new THREE.PerspectiveCamera(65, 1, 0.1, 48);
-const heroLight = new THREE.PointLight(0xffd8a8, 9, 10, 1.3); scene3.add(heroLight); // lumière douce autour du héros (lisibilité)
+// lumière principale venue d'en haut à gauche, comme le « soleil » peint des cartes de LoL
+const moon = new THREE.DirectionalLight(0xffe2c0, 1.25); moon.position.set(-0.5, 1, -0.35); scene3.add(moon);
+const camera = new THREE.PerspectiveCamera(40, 1, 0.5, 70);
+const heroLight = new THREE.PointLight(0xffd8a8, 14, 11, 1.2); scene3.add(heroLight); // lumière douce autour du héros (lisibilité)
 const THEME_LOOK = {
-  crypt: { fog: 0x1a1226, hemi: [0x9a98ff, 0x4a2a38, 1.25], name: 'La Crypte' },
-  cave: { fog: 0x0c1428, hemi: [0x7ab8ff, 0x382050, 1.35], name: 'Les Grottes de cristal' },
-  ruins: { fog: 0x142018, hemi: [0xb0e0b0, 0x3a3020, 1.3], name: 'Les Ruines englouties' },
+  crypt: { fog: 0x140e1e, hemi: [0xb0a8ff, 0x5a3a48, 1.6], name: 'La Crypte' },
+  cave: { fog: 0x0a1224, hemi: [0x8ac8ff, 0x483060, 1.7], name: 'Les Grottes de cristal' },
+  ruins: { fog: 0x0e1a12, hemi: [0xc8f0c0, 0x4a4028, 1.65], name: 'Les Ruines englouties' },
 };
 
 function adaptRes(dt) {
@@ -107,6 +108,9 @@ const P = {
 function buildHero() {
   if (P.ch) P.ch.dispose();
   P.ch = new Character({ height: HERO_H, hair: ['Hair_SimpleParted', 'Hair_Beard', 'Eyebrows_Regular'] });
+  // cercle doré sous le héros (repère visuel comme sous les champions de LoL)
+  const ring = new THREE.Mesh(new THREE.RingGeometry(0.62, 0.72, 40), new THREE.MeshBasicMaterial({ color: 0xffd36a, transparent: true, opacity: 0.75, depthWrite: false, blending: THREE.AdditiveBlending }));
+  ring.rotation.x = -Math.PI / 2; ring.position.y = 0.04; ring.renderOrder = 2; P.ch.group.add(ring);
   P.ch.setLooks(looksOf(G.save.equip));
   scene3.add(P.ch.group);
   P.ch.anim.loop('Idle_Loop');
@@ -130,7 +134,7 @@ const SKIN = { crypt: [0xb8b0a0, 0x7affd0], cave: [0x9a88c8, 0x5ad8ff], ruins: [
 function spawnEnemy(type, x, z, room) {
   const T = ETYPES[type], f = G.save.floor;
   const skin = SKIN[G.L.theme];
-  const ch = new Character({ height: T.height, skin: type === 'skeleton' ? 0xe0d8c8 : skin[0], eyes: type === 'boss' ? 0xff3a1a : skin[1] });
+  const ch = new Character({ height: T.height, rim: type === 'boss' ? 0xb070ff : 0xff6a50, rimS: 0.45, skin: type === 'skeleton' ? 0xe0d8c8 : skin[0], eyes: type === 'boss' ? 0xff3a1a : skin[1] });
   ch.setLooks(T.looks);
   scene3.add(ch.group);
   const hpM = 1 + 0.38 * (f - 1), dmM = 1 + 0.2 * (f - 1);
@@ -320,7 +324,7 @@ export function enterFloor(floor, fresh = true) {
   for (const k in P.cd) P.cd[k] = 0;
   // la caméra regarde vers la sortie la plus proche
   const room0 = L.rooms[0], first = L.rooms.find((r) => r.parent === 0) || L.rooms[1];
-  G.camYaw = Math.atan2(first.cx - room0.cx, first.cz - room0.cz); P.face = G.camYaw; G.camPitch = 0.18;
+  G.camYaw = 0; P.face = Math.atan2(first.cx - room0.cx, first.cz - room0.cz); // caméra fixe (vue LoL), le héros regarde vers la sortie
   camInit = false;
   UI.initMinimap(L);
   UI.banner(`Étage ${floor}`, look.name);
@@ -333,16 +337,15 @@ export function enterFloor(floor, fresh = true) {
 // ---------------------------------------------------------------
 function camFwd() { return [Math.sin(G.camYaw), Math.cos(G.camYaw)]; }
 function pickTarget(maxD) {
-  const [fx, fz] = camFwd(); const fa = Math.atan2(fx, fz);
+  const fa = P.face; // vue du dessus : on privilégie ce qui est devant le héros, mais on regarde tout autour
   let best = null, bs = Infinity;
   for (const e of G.enemies) {
     if (e.dead) continue;
     const dx = e.x - P.x, dz = e.z - P.z, d = Math.hypot(dx, dz);
     if (d > maxD) continue;
     const da = angDiff(Math.atan2(dx, dz), fa);
-    if (da > 1.1 && d > 2.2) continue;
     if (!lineFree(G.L, P.x, P.z, e.x, e.z)) continue;
-    const s = d * (1 + da * 1.2);
+    const s = d * (1 + da * 0.35);
     if (s < bs) { bs = s; best = e; }
   }
   return best;
@@ -568,7 +571,6 @@ function startAttack(step) {
   } else if (P.ch.anim.one) P.ch.anim.one.timeScale = P.atkSp; // l'animation continue toute seule
   const t = G.target && !G.target.dead ? G.target : pickTarget(4.5);
   if (t) { G.target = t; P.wantFace = Math.atan2(t.x - P.x, t.z - P.z); }
-  else if (!P.moving) P.wantFace = G.camYaw;
 }
 function doHit(A) {
   const fa = P.face;
@@ -758,11 +760,11 @@ function nextFloor() {
 function updateEnemies(dt) {
   const L = G.L;
   let combat = false;
-  const [cfx, cfz] = camFwd();
   for (const e of G.enemies) {
     // on ne dessine (et n'anime) que les ennemis proches et devant la caméra : gros gain sur iPhone
-    const ddx = e.x - camera.position.x, ddz = e.z - camera.position.z, dd = Math.hypot(ddx, ddz);
-    const vis = dd < 32 && (dd < 5 || (ddx * cfx + ddz * cfz) / dd > -0.2);
+    // zone visible par la caméra du dessus : un rectangle autour du héros
+    const ddx = e.x - P.x, ddz = e.z - P.z;
+    const vis = Math.abs(ddx) < 22 && ddz > -11 && ddz < 20;
     e.ch.group.visible = vis;
     if (vis || e.aggro) e.ch.update(dt);
     if (e.dead) {
@@ -880,60 +882,37 @@ function updateProjs(dt) {
 // ---------------------------------------------------------------
 const tv = new THREE.Vector3();
 let camInit = false;
-// état lissé de la caméra : point suivi, décalage d'épaule, distance de recul
-const cam = { fx: 0, fy: 0, fz: 0, side: 0.75, back: 3.5, shakeT: 0 };
+// Caméra « vue LoL » : haute, inclinée à ~56°, orientation fixe (le haut de l'écran = le nord),
+// elle suit le héros en douceur et anticipe un peu dans la direction où il court.
+const cam = { fx: 0, fy: 0, fz: 0, lx: 0, lz: 0, shakeT: 0 };
+const CAM_PITCH = 0.98;
+const hv = new THREE.Vector3();
 function updateCamera(dt) {
-  // glisser le doigt : tourner / regarder plus haut ou plus bas
-  if (input.camDX || input.camDY) {
-    G.camYaw -= input.camDX * 0.0065; G.camPitch = clamp(G.camPitch + input.camDY * 0.004, -0.35, 0.85);
-    input.camDX = input.camDY = 0; G.camManual = 2.2;
-  }
-  G.camManual = Math.max(0, G.camManual - dt);
-  // en combat, la caméra garde doucement la cible dans le cadre
-  if (G.target && !G.target.dead && G.inCombat && G.camManual <= 0 && P.state !== 'dead') {
-    const want = Math.atan2(G.target.x - P.x, G.target.z - P.z), d = angWrap(want - G.camYaw);
-    if (Math.abs(d) > 0.5 && Math.hypot(G.target.x - P.x, G.target.z - P.z) > 1.8) G.camYaw += d * Math.min(1, dt * 1.4);
-  }
-  const L = G.L, [fx, fz] = camFwd(), rx = -fz, rz = fx;
+  input.camDX = input.camDY = 0; // plus de rotation de caméra
   const portrait = camera.aspect < 1;
-  const sideWant0 = portrait ? 0.45 : 0.75, dist = portrait ? 4.1 : 3.5;
-  // 1) point suivi : la position du héros, très légèrement lissée (la caméra et le point visé
-  //    suivent le MÊME point, donc la distance ne « respire » plus quand on court puis s'arrête)
-  const hy = P.y + 1.75;
-  if (!camInit) { cam.fx = P.x; cam.fy = hy; cam.fz = P.z; cam.side = sideWant0; cam.back = dist; }
-  const kf = 1 - Math.exp(-dt * 30), ky = 1 - Math.exp(-dt * 10);
-  cam.fx += (P.x - cam.fx) * kf; cam.fz += (P.z - cam.fz) * kf; cam.fy += (hy - cam.fy) * ky;
-  // 2) décalage d'épaule : glisse doucement vers le centre si un mur est collé à droite
-  const sideWant = walkable(L, cam.fx + rx * (sideWant0 + 0.4), cam.fz + rz * (sideWant0 + 0.4)) ? sideWant0 : 0;
-  cam.side += (sideWant - cam.side) * (1 - Math.exp(-dt * 5));
-  const px = cam.fx + rx * cam.side, pz = cam.fz + rz * cam.side;
-  // 3) recul : on cherche jusqu'où on peut reculer sans entrer dans un mur
-  const cp = Math.cos(G.camPitch), sp = Math.sin(G.camPitch);
-  const M = L.theme === 'cave' ? 0.7 : 0.45;
-  const clear = (x, z) => walkable(L, x, z) && walkable(L, x + M, z) && walkable(L, x - M, z) && walkable(L, x, z + M) && walkable(L, x, z - M);
-  let backWant = dist;
-  for (let k = 0.3; k <= dist; k += 0.1) {
-    const x = px - fx * k * cp, z = pz - fz * k * cp, y = cam.fy + k * sp + 0.25;
-    if (!clear(x, z) || y > ceilAt(L, x, z) - 0.4) { backWant = Math.max(0.5, k - 0.15); break; }
-  }
-  // se rapproche vite (pour ne jamais traverser un mur) mais ne repart en arrière que lentement :
-  // fini le zoom / dézoom en rafale quand on longe un mur ou qu'on tourne près d'un pilier
-  if (backWant < cam.back) cam.back += (backWant - cam.back) * (1 - Math.exp(-dt * 22));
-  else cam.back += Math.min((backWant - cam.back) * (1 - Math.exp(-dt * 2.4)), 2.2 * dt);
-  if (!camInit) cam.back = backWant;
-  const back = cam.back;
-  // dos au mur : la caméra monte et regarde par-dessus l'épaule au lieu de rentrer dans le héros
-  const close = Math.max(0, 1.8 - back);
-  const cx = px - fx * back * cp, cz = pz - fz * back * cp;
-  let cy = Math.min(cam.fy + back * sp + 0.25 + close * 0.9, ceilAt(L, px, pz) - 0.3);
-  cy = Math.max(cy, groundAt(L, cx, cz) + 0.5);
-  const lx = px + fx * 6, lz = pz + fz * 6, ly = cam.fy - 6 * Math.tan(G.camPitch) * 0.6 - close * 1.6;
+  const D = portrait ? 17 : 12.5;
+  // anticipation : on décale un peu le cadre vers là où va le héros
+  const leadX = P.moving ? Math.sin(P.face) * 1.6 : 0, leadZ = P.moving ? Math.cos(P.face) * 1.6 : 0;
+  const kl = 1 - Math.exp(-dt * 2.5);
+  cam.lx += (leadX - cam.lx) * kl; cam.lz += (leadZ - cam.lz) * kl;
+  const ty = P.y + 0.6;
+  if (!camInit) { cam.fx = P.x; cam.fy = ty; cam.fz = P.z; cam.lx = cam.lz = 0; }
+  const kf = 1 - Math.exp(-dt * 9), ky = 1 - Math.exp(-dt * 5);
+  cam.fx += (P.x + cam.lx - cam.fx) * kf; cam.fz += (P.z + cam.lz - cam.fz) * kf; cam.fy += (ty - cam.fy) * ky;
   camInit = true;
-  // tremblement : une oscillation douce plutôt qu'un bruit aléatoire à chaque image
   const sh = G.shake; G.shake = Math.max(0, G.shake - dt * 1.4); cam.shakeT += dt;
-  const ox = Math.sin(cam.shakeT * 47) * sh * 0.22, oy = Math.sin(cam.shakeT * 61 + 1.3) * sh * 0.22;
-  camera.position.set(cx + rx * ox, cy + oy, cz + rz * ox);
-  tv.set(lx, ly, lz); camera.lookAt(tv);
+  const ox = Math.sin(cam.shakeT * 47) * sh * 0.3, oy = Math.sin(cam.shakeT * 61 + 1.3) * sh * 0.3;
+  camera.position.set(cam.fx + ox, cam.fy + Math.sin(CAM_PITCH) * D + oy, cam.fz - Math.cos(CAM_PITCH) * D);
+  tv.set(cam.fx + ox, cam.fy, cam.fz); camera.lookAt(tv);
+  scene3.fog.near = D + 4; scene3.fog.far = D + 30;
+  // trou de visibilité : position du héros à l'écran (en pixels) et sa distance à la caméra
+  camera.updateMatrixWorld();
+  hv.set(P.x, P.y + 1, P.z).applyMatrix4(camera.matrixWorldInverse);
+  cutout.depth.value = -hv.z;
+  hv.applyMatrix4(camera.projectionMatrix);
+  const cw = renderer.domElement.width, ch = renderer.domElement.height;
+  cutout.hero.value.set((hv.x * 0.5 + 0.5) * cw, (hv.y * 0.5 + 0.5) * ch);
+  cutout.radius.value = ch * 0.17;
 }
 
 // ---------------------------------------------------------------

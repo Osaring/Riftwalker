@@ -1,11 +1,11 @@
 # Riftwalker
 
-Roguelike d'action à la 3ème personne pour iPhone (site web jouable hors ligne), dans des donjons générés à chaque partie.
+Roguelike d'action en vue du dessus façon League of Legends (Wild Rift) pour iPhone (site web jouable hors ligne), dans des donjons générés à chaque partie.
 
 **Jouer :** https://osaring.github.io/riftwalker/ puis, dans Safari, Partager → « Sur l'écran d'accueil ».
 
 ## Version 2 (refonte complète)
-- Vue par-dessus l'épaule façon PUBG Mobile : joystick à gauche, caméra au doigt à droite
+- Caméra haute et fixe façon LoL : joystick à gauche, attaque et compétences à droite ; les murs deviennent transparents quand ils cachent le héros
 - Guerrier : combo de 3 coups, Charge, Tourbillon, Cri de guerre, roulade d'esquive, potions, rage
 - Héros et monstres aux proportions réalistes, animations mélangées (les jambes courent pendant que les bras frappent)
 - Équipement façon WoW : 8 emplacements, 6 raretés, statistiques, et **chaque pièce change l'apparence du héros**

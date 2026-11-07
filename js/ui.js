@@ -138,7 +138,7 @@ export function updateHUD(g, P, camera) {
   const c = oc, W = ov.width, Hh = ov.height;
   for (const e of g.enemies) {
     if (e.dead || (!e.aggro && e.hp >= e.maxHp)) continue;
-    const [x, y, ok] = proj(camera, e.x, e.y + e.T.height + 0.35, e.z);
+    const [x, y, ok] = proj(camera, e.x, e.y + e.T.height * 1.35 + 0.3, e.z);
     if (!ok || x < 0 || x > W || y < 0 || y > Hh) continue;
     const dd = Math.hypot(e.x - P.x, e.z - P.z); if (dd > 22) continue;
     const bw = (e.T.boss ? 90 : 50) * k, bh = 6 * k; ovDirty = true;
@@ -256,7 +256,7 @@ function previewScene() {
 function rebuildPreview() {
   const p = previewScene();
   if (p.ch) p.ch.dispose();
-  p.ch = new Character({ height: HERO_H, hair: ['Hair_SimpleParted', 'Hair_Beard', 'Eyebrows_Regular'] });
+  p.ch = new Character({ height: HERO_H, vis: 1, hair: ['Hair_SimpleParted', 'Hair_Beard', 'Eyebrows_Regular'] });
   p.ch.setLooks(looksOf(G.save.equip));
   p.ch.anim.loop('Sword_Idle');
   p.s.add(p.ch.group);

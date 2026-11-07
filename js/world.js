@@ -11,6 +11,27 @@ import { scene as piece, A } from './assets.js';
 import { fbm, noise2 } from './util.js';
 
 const CHUNK = 16;
+export const WALL_H = 2.8; // hauteur des murs : assez bas pour qu'on voie la salle d'en haut (comme LoL)
+
+// « Trou de visibilité » : les murs et décors situés ENTRE la caméra et le héros deviennent
+// transparents (effet de trame) dans un cercle autour de lui. Mis à jour à chaque image par main.js.
+export const cutout = { hero: { value: new THREE.Vector2(-9999, -9999) }, depth: { value: 0 }, radius: { value: 110 } };
+export function addCutout(mat) {
+  if (mat.userData.cut) return; mat.userData.cut = true;
+  const prev = mat.onBeforeCompile;
+  mat.onBeforeCompile = (sh, r) => {
+    prev && prev.call(mat, sh, r);
+    sh.uniforms.cutHero = cutout.hero; sh.uniforms.cutDepth = cutout.depth; sh.uniforms.cutR = cutout.radius;
+    sh.fragmentShader = 'uniform vec2 cutHero; uniform float cutDepth; uniform float cutR;\n' + sh.fragmentShader.replace('#include <clipping_planes_fragment>', `#include <clipping_planes_fragment>
+      { float dpx = length(gl_FragCoord.xy - cutHero);
+        if (vViewPosition.z < cutDepth - 0.8 && dpx < cutR) {
+          float k = smoothstep(cutR, cutR * 0.55, dpx) * 0.85;
+          vec2 g = mod(floor(gl_FragCoord.xy), 4.0); float th = mod(g.x * 3.0 + g.y * 2.0 + g.x * g.y, 4.0) / 4.0 + mod(g.y, 2.0) * 0.125;
+          if (th < k) discard; } }`);
+  };
+  mat.customProgramCacheKey = () => 'cut' + (mat.type || '');
+  mat.needsUpdate = true;
+}
 let baked = null; // textures photographiées une fois (sol et mur du château)
 
 // photographie une pièce 3D (vue de dessus ou de face) pour en faire une texture
@@ -40,21 +61,21 @@ function textures(renderer) {
 
 // matériaux par ambiance : couleurs franches façon jeu moderne (pas réaliste terne)
 function materials(theme, T) {
-  const M = (o) => new THREE.MeshStandardMaterial({ roughness: 0.92, metalness: 0, side: THREE.DoubleSide, ...o });
+  const M = (o) => new THREE.MeshStandardMaterial({ roughness: 0.92, metalness: 0, side: THREE.DoubleSide, vertexColors: true, ...o });
   if (theme === 'cave') return {
     floor: M({ map: T.rock, color: 0x8a7a96 }),
     wall: M({ map: T.rock, color: 0x7a6e94 }),
-    ceil: M({ map: T.rock, color: 0x4a4060 }),
+    ceil: M({ map: T.rock, color: 0x8a7aae }),
   };
   if (theme === 'ruins') return {
     floor: M({ map: T.floor, color: 0xa8b090 }),
     wall: M({ map: T.wall, color: 0xb0b498 }),
-    ceil: M({ map: T.floor, color: 0x5a5a48 }),
+    ceil: M({ map: T.rock, color: 0x9aae78 }),
   };
   return {
     floor: M({ map: T.floor, color: 0xc8b8b0 }),
     wall: M({ map: T.wall, color: 0xc0b0b8 }),
-    ceil: M({ map: T.floor, color: 0x6a5a62 }),
+    ceil: M({ map: T.rock, color: 0x9a8a98 }),
   };
 }
 
@@ -67,15 +88,43 @@ function buildShell(L, group, mats) {
   const bins = new Map();
   const bin = (x, z, kind) => {
     const key = Math.floor(x / CHUNK) + ',' + Math.floor(z / CHUNK) + ',' + kind;
-    let b = bins.get(key); if (!b) { b = { kind, pos: [], uv: [] }; bins.set(key, b); } return b;
+    let b = bins.get(key); if (!b) { b = { kind, pos: [], uv: [], col: [] }; bins.set(key, b); } return b;
   };
   const inside = (i, j) => i >= 0 && j >= 0 && i < W && j < H && grid[j * W + i] === 1;
   const hOf = (i, j) => height[j * W + i], cOf = (i, j) => ceil[j * W + i];
   // déformation des parois de grotte (même valeur pour un même point : pas de fissure entre morceaux)
   const caveOff = (x, y, z) => cave ? [(fbm(x * 0.35 + y * 0.2, z * 0.35, 21) - 0.5) * 1.3, (fbm(x * 0.35, z * 0.35 - y * 0.2, 37) - 0.5) * 1.3] : [0, 0];
   const ceilOff = (x, z) => cave ? (fbm(x * 0.3, z * 0.3, 41) - 0.5) * 2.2 : 0;
-  const pushTri = (b, a, c, d, uvs) => { b.pos.push(...a, ...c, ...d); b.uv.push(...uvs); };
+  // couleur par sommet : c'est elle qui donne le côté « peint » (ombre au pied des murs, taches de couleur)
+  const dist = new Float32Array(W * H).fill(9);
+  { const q = []; for (let k = 0; k < W * H; k++) if (grid[k] !== 1) { dist[k] = 0; q.push(k); }
+    for (let h = 0; h < q.length; h++) { const k = q[h], i = k % W, j = (k / W) | 0;
+      for (const [di, dj] of [[1, 0], [-1, 0], [0, 1], [0, -1]]) { const ii = i + di, jj = j + dj; if (ii < 0 || jj < 0 || ii >= W || jj >= H) continue; const kk = jj * W + ii; if (dist[kk] > dist[k] + 1) { dist[kk] = dist[k] + 1; q.push(kk); } } } }
+  const dAt = (x, z) => { const i = Math.floor(x), j = Math.floor(z); return (i >= 0 && j >= 0 && i < W && j < H) ? dist[j * W + i] : 0; };
+  const moss = theme === 'ruins' ? [0.75, 1.05, 0.7] : theme === 'cave' ? [0.8, 0.85, 1.15] : [1.08, 0.9, 0.95];
+  const colOf = (kind, v) => {
+    const [x, y, z] = v, n = fbm(x * 0.13, z * 0.13, 7), m = fbm(x * 0.05 + 3, z * 0.05, 11);
+    let k = 0.82 + 0.36 * n, t = Math.max(0, m - 0.5) * 2;
+    if (kind === 'floor') { const d = dAt(x, z); k *= 0.5 + 0.5 * Math.min(1, Math.max(0, (d - 0.3) / 2.6)); }
+    else if (kind === 'wall') { const h = Math.max(0, Math.min(1, (y - (v.base || 0)) / WALL_H)); k *= 0.55 + 0.6 * h; }
+    else { k *= 0.95; t = Math.min(1, t * 1.5); }
+    return [k * (1 + (moss[0] - 1) * t), k * (1 + (moss[1] - 1) * t), k * (1 + (moss[2] - 1) * t)];
+  };
+  const pushTri = (b, a, c, d, uvs) => { b.pos.push(...a, ...c, ...d); b.uv.push(...uvs); b.col.push(...colOf(b.kind, a), ...colOf(b.kind, c), ...colOf(b.kind, d)); };
   const fuv = cave ? 0.25 : 0.5;
+  // hauteur du sol « prolongée » sous la roche (pour poser le dessus des murs)
+  const T = new Float32Array(W * H).fill(-99);
+  for (let k = 0; k < W * H; k++) if (grid[k] === 1) T[k] = height[k];
+  for (let pass = 0; pass < 8; pass++) {
+    const T2 = T.slice();
+    for (let j = 0; j < H; j++) for (let i = 0; i < W; i++) {
+      const k = j * W + i; if (T[k] > -99) continue;
+      let m = -99; for (const [di, dj] of [[1, 0], [-1, 0], [0, 1], [0, -1]]) { const ii = i + di, jj = j + dj; if (ii >= 0 && jj >= 0 && ii < W && jj < H) m = Math.max(m, T[jj * W + ii]); }
+      T2[k] = m;
+    }
+    T.set(T2);
+  }
+  const tOf = (i, j) => { const v = (i >= 0 && j >= 0 && i < W && j < H) ? T[j * W + i] : -99; return v > -99 ? v : 0; };
 
   for (let j = -1; j < H; j++) for (let i = -1; i < W; i++) {
     const a = inside(i, j), b = inside(i + 1, j), c = inside(i + 1, j + 1), d = inside(i, j + 1);
@@ -95,12 +144,11 @@ function buildShell(L, group, mats) {
     }
     // sol et plafond (éventail de triangles)
     const cx = i + 1, cz = j + 1;
-    const fb = bin(cx, cz, 'floor'), cb = bin(cx, cz, 'ceil');
-    const fy = (p) => hOf(...p[2]), cy = (p) => cOf(...p[2]) + ceilOff(p[0], p[1]);
+    const fb = bin(cx, cz, 'floor');
+    const fy = (p) => hOf(...p[2]);
     for (let k = 1; k < poly.length - 1; k++) {
       const p0 = poly[0], p1 = poly[k], p2 = poly[k + 1];
       pushTri(fb, [p0[0], fy(p0), p0[1]], [p2[0], fy(p2), p2[1]], [p1[0], fy(p1), p1[1]], [p0[0] * fuv, p0[1] * fuv, p2[0] * fuv, p2[1] * fuv, p1[0] * fuv, p1[1] * fuv]);
-      pushTri(cb, [p0[0], cy(p0), p0[1]], [p1[0], cy(p1), p1[1]], [p2[0], cy(p2), p2[1]], [p0[0] * fuv, p0[1] * fuv, p1[0] * fuv, p1[1] * fuv, p2[0] * fuv, p2[1] * fuv]);
     }
     if (n === 4) continue;
     // murs : segments entre les milieux d'arêtes traversées
@@ -121,28 +169,55 @@ function buildShell(L, group, mats) {
       const len = Math.hypot(p2[0] - p1[0], p2[1] - p1[1]);
       const ux = (p2[0] - p1[0]) / len, uz = (p2[1] - p1[1]) / len;
       const u1 = (p1[0] * ux + p1[1] * uz) * 0.5, u2 = u1 + len * 0.5;
-      const b1 = hOf(...p1[2]) - 0.6, b2 = hOf(...p2[2]) - 0.6, t1 = cOf(...p1[2]) + ceilOff(p1[0], p1[1]) + 0.3, t2 = cOf(...p2[2]) + ceilOff(p2[0], p2[1]) + 0.3;
+      const b1 = hOf(...p1[2]) - 0.6, b2 = hOf(...p2[2]) - 0.6, t1 = hOf(...p1[2]) + WALL_H, t2 = hOf(...p2[2]) + WALL_H;
       const wb = bin(cx, cz, 'wall');
-      const rows = cave ? 6 : 1;
+      const rows = cave ? 4 : 1;
       for (let r = 0; r < rows; r++) {
         const ta = r / rows, tb = (r + 1) / rows;
         const ya1 = b1 + (t1 - b1) * ta, yb1 = b1 + (t1 - b1) * tb, ya2 = b2 + (t2 - b2) * ta, yb2 = b2 + (t2 - b2) * tb;
-        const V = (x, y, z) => { const o = caveOff(x, y, z); return [x + o[0], y, z + o[1]]; };
-        const A1 = V(p1[0], ya1, p1[1]), B1 = V(p1[0], yb1, p1[1]), A2 = V(p2[0], ya2, p2[1]), B2 = V(p2[0], yb2, p2[1]);
+        // bosses de la paroi, nulles en haut pour rejoindre proprement le dessus du mur
+        const V = (x, y, z, t) => { const o = caveOff(x, y, z), f = Math.min(1, (1 - t) * 3); return [x + o[0] * f, y, z + o[1] * f]; };
+        const A1 = V(p1[0], ya1, p1[1], ta), B1 = V(p1[0], yb1, p1[1], tb), A2 = V(p2[0], ya2, p2[1], ta), B2 = V(p2[0], yb2, p2[1], tb);
+        A1.base = B1.base = b1 + 0.6; A2.base = B2.base = b2 + 0.6;
         const vs = cave ? 0.25 : 0.5;
         pushTri(wb, A1, B1, A2, [u1, ya1 * vs, u1, yb1 * vs, u2, ya2 * vs]);
         pushTri(wb, A2, B1, B2, [u2, ya2 * vs, u1, yb1 * vs, u2, yb2 * vs]);
       }
     }
   }
+  // dessus des murs : on recouvre toute la roche (l'inverse du sol) à hauteur de mur
+  const solidIn = (i, j) => !inside(i, j);
+  for (let j = -2; j < H + 1; j++) for (let i = -2; i < W + 1; i++) {
+    const a = solidIn(i, j), b = solidIn(i + 1, j), c = solidIn(i + 1, j + 1), d = solidIn(i, j + 1);
+    if (a + b + c + d === 0) continue;
+    const C = { a: [i, j, a], b: [i + 1, j, b], c: [i + 1, j + 1, c], d: [i, j + 1, d] };
+    const pt = (q) => [C[q][0] + 0.5, C[q][1] + 0.5];
+    const order = [['a'], ['a', 'b'], ['b'], ['b', 'c'], ['c'], ['c', 'd'], ['d'], ['d', 'a']];
+    const poly = [];
+    for (const o of order) {
+      if (o.length === 1) { if (C[o[0]][2]) { const [x, z] = pt(o[0]); poly.push([x, tOf(C[o[0]][0], C[o[0]][1]) + WALL_H, z]); } }
+      else if (C[o[0]][2] !== C[o[1]][2]) {
+        const f = C[o[0]][2] ? o[1] : o[0]; // la case de sol voisine donne la hauteur exacte du haut du mur
+        const [x1, z1] = pt(o[0]), [x2, z2] = pt(o[1]);
+        poly.push([(x1 + x2) / 2, hOf(C[f][0], C[f][1]) + WALL_H, (z1 + z2) / 2]);
+      }
+    }
+    const cb = bin(i + 1, j + 1, 'ceil');
+    for (let k = 1; k < poly.length - 1; k++) {
+      const p0 = poly[0], p1 = poly[k], p2 = poly[k + 1];
+      pushTri(cb, p0, p2, p1, [p0[0] * fuv, p0[2] * fuv, p2[0] * fuv, p2[2] * fuv, p1[0] * fuv, p1[2] * fuv]);
+    }
+  }
   for (const b of bins.values()) {
     const g = new THREE.BufferGeometry();
     g.setAttribute('position', new THREE.Float32BufferAttribute(b.pos, 3));
     g.setAttribute('uv', new THREE.Float32BufferAttribute(b.uv, 2));
+    g.setAttribute('color', new THREE.Float32BufferAttribute(b.col, 3));
     g.computeVertexNormals(); g.computeBoundingSphere();
     const m = new THREE.Mesh(g, mats[b.kind]);
     group.add(m);
   }
+  addCutout(mats.wall); addCutout(mats.ceil);
 }
 
 // ---------------------------------------------------------------
@@ -177,8 +252,12 @@ export function buildWorld(renderer, scene3, L) {
   const mat = (x, y, z, ry, s, sy = s) => new THREE.Matrix4().compose(v.set(x, y, z), q.setFromEuler(e.set(0, ry, 0)), sc.set(s, sy, s));
   const flames = [];
   const R2 = (n) => ((Math.sin(n * 91.7) * 43758.5) % 1 + 1) % 1;
+  const floorH = (x, z) => L.height[Math.floor(z) * L.W + Math.floor(x)] || 0;
   for (const p of L.props) {
     const k = p.kind;
+    // vue du dessus : plus de plafond, donc plus rien d'accroché en hauteur
+    if (k === 'stalactite' || (k === 'cobweb' && p.y > floorH(p.x, p.z) + 1.5)) continue;
+    if (k === 'pillar') p.top = Math.min(p.top, floorH(p.x, p.z) + WALL_H + 0.2);
     const h = R2(p.x * 13 + p.z * 7);
     switch (k) {
       case 'torch': add('torch', mat(p.x, p.y - 0.4, p.z, p.rot + Math.PI, 0.9)); flames.push([p.x, p.y + 0.42, p.z, 1]); break;
@@ -248,6 +327,7 @@ export function buildWorld(renderer, scene3, L) {
         part.forEach((it, i) => { im.setMatrixAt(i, new THREE.Matrix4().multiplyMatrices(it.M, local)); if (it.col !== undefined) im.setColorAt(i, new THREE.Color(it.col)); });
         im.instanceMatrix.needsUpdate = true; if (im.instanceColor) im.instanceColor.needsUpdate = true;
         im.computeBoundingSphere();
+        if (/column|statue|deadtree|banner|torch|stalagmite|crystal|cobweb|plant/.test(kind)) addCutout(m);
         group.add(im);
       }
     }

@@ -6,6 +6,8 @@ import { A, scene, variantTex } from './assets.js';
 
 export const HERO_H = 1.8; // taille d'un humain, en mètres (1 unité = 1 mètre)
 const NATIVE_H = 1.87;
+// en vue du dessus, les personnages sont agrandis (comme les champions de LoL) pour rester lisibles
+export const VIS = 1.35;
 
 // pièces qui laissent voir les cheveux / qui les cachent
 const HIDES_HAIR = /Hood|Armet|Horns/;
@@ -29,7 +31,8 @@ export class Character {
     this.bones = {};
     this.root.traverse((o) => { if (o.isBone) this.bones[o.name] = o; if (o.isMesh) { o.material = o.material.clone(); o.frustumCulled = false; } });
     this.host = null; this.root.traverse((o) => { if (o.isSkinnedMesh && !this.host) this.host = o; });
-    this.scale = (opts.height || HERO_H) / NATIVE_H;
+    this.vis = opts.vis || VIS;
+    this.scale = (opts.height || HERO_H) / NATIVE_H * this.vis;
     this.root.scale.setScalar(this.scale);
     this.group.add(this.root);
     this.parts = {}; // emplacement -> objets ajoutés
@@ -38,14 +41,27 @@ export class Character {
     this.hair = opts.hair || null;
     this.eyes = opts.eyes || null;
     // ombre ronde sous les pieds
-    const blob = new THREE.Mesh(new THREE.CircleGeometry(0.42 * (opts.height || HERO_H) / HERO_H, 20), new THREE.MeshBasicMaterial({ color: 0, transparent: true, opacity: 0.38, depthWrite: false }));
+    const blob = new THREE.Mesh(new THREE.CircleGeometry(0.42 * this.vis * (opts.height || HERO_H) / HERO_H, 20), new THREE.MeshBasicMaterial({ color: 0, transparent: true, opacity: 0.38, depthWrite: false }));
     blob.rotation.x = -Math.PI / 2; blob.position.y = 0.02; blob.renderOrder = 1; this.group.add(blob); this.blob = blob;
+    // contour lumineux (« rim light ») : détache le personnage du décor, comme dans LoL
+    this.rimC = { value: new THREE.Color(opts.rim !== undefined ? opts.rim : 0xffe0a0) }; this.rimS = { value: opts.rimS !== undefined ? opts.rimS : 0.55 };
+    this.root.traverse((o) => { if (o.isMesh) this.addRim(o.material); });
     this.anim = new Animator(this.root);
     this.flashT = 0; this.glowCol = new THREE.Color();
     this.mats = [];
     this.collectMats();
   }
 
+  addRim(mat) {
+    if (!mat || mat.userData.rim || !mat.isMeshStandardMaterial) return; mat.userData.rim = true;
+    const C = this.rimC, S = this.rimS;
+    mat.onBeforeCompile = (sh) => {
+      sh.uniforms.rimC = C; sh.uniforms.rimS = S;
+      sh.fragmentShader = 'uniform vec3 rimC; uniform float rimS;\n' + sh.fragmentShader.replace('#include <emissivemap_fragment>',
+        '#include <emissivemap_fragment>\n float rimF = 1.0 - clamp(dot(normal, normalize(vViewPosition)), 0.0, 1.0); totalEmissiveRadiance += rimC * pow(rimF, 2.5) * rimS;');
+    };
+    mat.customProgramCacheKey = () => 'rim';
+  }
   tintSkin(obj) { obj.traverse((o) => { if (o.isMesh && /Superhero|Regular_Male/.test(o.material.name)) o.material.color.copy(this.skinTint); }); }
 
   // ajoute une pièce skinnée (tenue, cheveux) en la branchant sur nos os
@@ -64,6 +80,7 @@ export class Character {
         if (look.glow) { m.material.emissive = new THREE.Color(look.glow); m.material.emissiveIntensity = 0.07; }
         m.material.roughness = look.metal ? 0.45 : 0.85; m.material.metalness = look.metal ? 0.35 : 0;
       } else if (this.skinTint) m.material.color.copy(this.skinTint);
+      this.addRim(m.material);
       this.host.parent.add(m); list.push(m);
     }
   }
@@ -72,7 +89,7 @@ export class Character {
   addHeld(slot, partName, bone, look = {}) {
     const src = scene('gear', partName); if (!src || !this.bones[bone]) return;
     const w = src.clone(true);
-    w.traverse((o) => { if (o.isMesh) { o.material = o.material.clone(); if (look.tint) o.material.color.multiply(new THREE.Color(look.tint)); if (look.glow) { o.material.emissive = new THREE.Color(look.glow); o.material.emissiveIntensity = 0.35; } } });
+    w.traverse((o) => { if (o.isMesh) { o.material = o.material.clone(); this.addRim(o.material); if (look.tint) o.material.color.multiply(new THREE.Color(look.tint)); if (look.glow) { o.material.emissive = new THREE.Color(look.glow); o.material.emissiveIntensity = 0.35; } } });
     if (look.scale) w.scale.setScalar(look.scale);
     if (look.rot) w.rotation.set(...look.rot);
     if (look.pos) w.position.set(...look.pos);
