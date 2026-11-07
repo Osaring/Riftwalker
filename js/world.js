@@ -9,6 +9,7 @@ import * as THREE from 'three';
 import { mergeGeometries } from 'three/addons/utils/BufferGeometryUtils.js';
 import { scene as piece, A } from './assets.js';
 import { fbm, noise2 } from './util.js';
+import { toon, ANIME } from './style.js';
 
 const CHUNK = 16;
 export const WALL_H = 2.8; // hauteur des murs : assez bas pour qu'on voie la salle d'en haut (comme LoL)
@@ -61,7 +62,13 @@ function textures(renderer) {
 
 // matériaux par ambiance : couleurs franches façon jeu moderne (pas réaliste terne)
 function materials(theme, T) {
-  const M = (o) => new THREE.MeshStandardMaterial({ roughness: 0.92, metalness: 0, side: THREE.DoubleSide, vertexColors: true, ...o });
+  if (ANIME) { // décor d'animé : aplats nets, dessus de roche uni (pas de texture chargée)
+    const M2 = (o) => toon(new THREE.MeshStandardMaterial({ roughness: 0.92, metalness: 0, side: THREE.DoubleSide, vertexColors: true, ...o }));
+    if (theme === 'cave') return { floor: M2({ map: T.floor, color: 0x6a6aa8 }), wall: M2({ map: T.rock, color: 0x9098d0 }), ceil: M2({ color: 0x34366a }) };
+    if (theme === 'ruins') return { floor: M2({ map: T.floor, color: 0xb8c4a0 }), wall: M2({ map: T.wall, color: 0xb0b89a }), ceil: M2({ map: T.rock, color: 0x5a7a48 }) };
+    return { floor: M2({ map: T.floor, color: 0xb0a8c0 }), wall: M2({ map: T.wall, color: 0xb8a8c0 }), ceil: M2({ map: T.rock, color: 0x6a5a8a }) };
+  }
+  const M = (o) => toon(new THREE.MeshStandardMaterial({ roughness: 0.92, metalness: 0, side: THREE.DoubleSide, vertexColors: true, ...o }));
   if (theme === 'cave') return {
     floor: M({ map: T.rock, color: 0x8a7a96 }),
     wall: M({ map: T.rock, color: 0x7a6e94 }),
@@ -305,16 +312,16 @@ export function buildWorld(renderer, scene3, L) {
     for (const it of items) { v.setFromMatrixPosition(it.M); const key = Math.floor(v.x / CHUNK) + ',' + Math.floor(v.z / CHUNK); (chunks.get(key) || chunks.set(key, []).get(key)).push(it); }
     let meshes = [];
     if (procedural[kind]) {
-      const m = kind === 'crystal'
+      const m = toon(kind === 'crystal'
         ? new THREE.MeshStandardMaterial({ color: 0xffffff, emissive: 0xffffff, emissiveIntensity: 0.9, roughness: 0.2, metalness: 0.1, transparent: true, opacity: 0.88 })
-        : new THREE.MeshStandardMaterial({ map: T.rock, color: L.theme === 'cave' ? 0x7a6e94 : 0x8a8a7a, roughness: 0.95 });
+        : new THREE.MeshStandardMaterial({ map: T.rock, color: L.theme === 'cave' ? 0x7a6e94 : 0x8a8a7a, roughness: 0.95 }));
       meshes = [[procedural[kind], m, new THREE.Matrix4()]];
     } else {
       const src = SRC[kind] && SRC[kind](); if (!src) continue;
       src.updateMatrixWorld(true);
       src.traverse((o) => {
         if (!o.isMesh) return;
-        const m = o.material.clone();
+        const m = toon(o.material.clone());
         if (kind === 'mushglow') { m.emissive = new THREE.Color(0xb060ff); m.emissiveIntensity = 0.9; }
         if (kind === 'fire') { m.emissive = new THREE.Color(0xff6a1a); m.emissiveIntensity = 0.5; }
         if (L.theme === 'ruins' && /column|bricks|statue|pedestal/.test(kind)) m.color.multiply(new THREE.Color(0xc8d0b0));
@@ -402,7 +409,7 @@ export function buildWorld(renderer, scene3, L) {
       if (!l) { pl.intensity = 0; return; }
       pl.position.set(l.x, l.y, l.z); pl.color.setHex(l.col);
       const flick = l.kind === 'torch' || l.kind === 'fire' ? 0.85 + 0.15 * Math.sin(time * 11 + l.x * 3) * Math.sin(time * 7.7 + l.z) : l.kind === 'portal' ? 0.8 + 0.2 * Math.sin(time * 2) : 1;
-      pl.intensity = l.i * 4.5 * flick; pl.distance = l.kind === 'portal' ? 18 : 15;
+      pl.intensity = l.i * (ANIME ? 3 : 4.5) * flick; pl.distance = l.kind === 'portal' ? 18 : 15;
     });
   }
   function dispose() {

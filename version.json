@@ -1,4 +1,4 @@
 {
-  "version": "3.0.0",
-  "notes": "Vue du dessus façon League of Legends : caméra haute, murs transparents autour du héros, couleurs plus vives"
+  "version": "3.1.0",
+  "notes": "Style animé japonais (cel-shading et contours) — bouton Style sur l'écran titre pour revenir au classique"
 }

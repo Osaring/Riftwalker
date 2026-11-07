@@ -3,6 +3,7 @@
 import * as THREE from 'three';
 import * as SkeletonUtils from 'three/addons/utils/SkeletonUtils.js';
 import { A, scene, variantTex } from './assets.js';
+import { toon, addOutline } from './style.js';
 
 export const HERO_H = 1.8; // taille d'un humain, en mètres (1 unité = 1 mètre)
 const NATIVE_H = 1.87;
@@ -29,7 +30,9 @@ export class Character {
     this.group = new THREE.Group();
     this.root = SkeletonUtils.clone(scene('gear', 'head'));
     this.bones = {};
-    this.root.traverse((o) => { if (o.isBone) this.bones[o.name] = o; if (o.isMesh) { o.material = o.material.clone(); o.frustumCulled = false; } });
+    const heads = [];
+    this.root.traverse((o) => { if (o.isBone) this.bones[o.name] = o; if (o.isMesh) { o.material = toon(o.material.clone()); o.frustumCulled = false; if (o.isSkinnedMesh && !/Eye/.test(o.material.name)) heads.push(o); } });
+    for (const h of heads) addOutline(h); // contour du visage / de la tête
     this.host = null; this.root.traverse((o) => { if (o.isSkinnedMesh && !this.host) this.host = o; });
     this.vis = opts.vis || VIS;
     this.scale = (opts.height || HERO_H) / NATIVE_H * this.vis;
@@ -53,7 +56,7 @@ export class Character {
   }
 
   addRim(mat) {
-    if (!mat || mat.userData.rim || !mat.isMeshStandardMaterial) return; mat.userData.rim = true;
+    if (!mat || mat.userData.rim || !(mat.isMeshStandardMaterial || mat.isMeshToonMaterial)) return; mat.userData.rim = true;
     const C = this.rimC, S = this.rimS;
     mat.onBeforeCompile = (sh) => {
       sh.uniforms.rimC = C; sh.uniforms.rimS = S;
@@ -72,7 +75,7 @@ export class Character {
     const list = this.parts[slot] || (this.parts[slot] = []);
     for (const m of meshes) {
       m.bind(new THREE.Skeleton(m.skeleton.bones.map((b) => this.bones[b.name] || b), m.skeleton.boneInverses), m.bindMatrix);
-      m.material = m.material.clone(); m.frustumCulled = false;
+      m.material = toon(m.material.clone()); m.frustumCulled = false;
       const outfit = !/Superhero|Regular_Male|Eyes|Hair/.test(m.material.name);
       if (outfit) {
         if (look.tex) m.material.map = variantTex(look.tex, m.material.map);
@@ -82,6 +85,7 @@ export class Character {
       } else if (this.skinTint) m.material.color.copy(this.skinTint);
       this.addRim(m.material);
       this.host.parent.add(m); list.push(m);
+      if (!/^Eyebrows/.test(partName) && !/Eye/.test(m.material.name)) { const o = addOutline(m); if (o) list.push(o); }
     }
   }
 
@@ -89,7 +93,9 @@ export class Character {
   addHeld(slot, partName, bone, look = {}) {
     const src = scene('gear', partName); if (!src || !this.bones[bone]) return;
     const w = src.clone(true);
-    w.traverse((o) => { if (o.isMesh) { o.material = o.material.clone(); this.addRim(o.material); if (look.tint) o.material.color.multiply(new THREE.Color(look.tint)); if (look.glow) { o.material.emissive = new THREE.Color(look.glow); o.material.emissiveIntensity = 0.35; } } });
+    const wm = [];
+    w.traverse((o) => { if (o.isMesh) { wm.push(o); o.material = toon(o.material.clone()); this.addRim(o.material); if (look.tint) o.material.color.multiply(new THREE.Color(look.tint)); if (look.glow) { o.material.emissive = new THREE.Color(look.glow); o.material.emissiveIntensity = 0.35; } } });
+    for (const o of wm) addOutline(o);
     if (look.scale) w.scale.setScalar(look.scale);
     if (look.rot) w.rotation.set(...look.rot);
     if (look.pos) w.position.set(...look.pos);
@@ -100,7 +106,7 @@ export class Character {
   clearSlot(slot) {
     for (const o of this.parts[slot] || []) {
       o.parent && o.parent.remove(o);
-      o.traverse && o.traverse((m) => { if (m.isMesh) m.material.dispose(); });
+      o.traverse && o.traverse((m) => { if (m.isMesh && !m.userData.outline) m.material.dispose(); });
     }
     this.parts[slot] = [];
   }
@@ -137,7 +143,7 @@ export class Character {
       if (this.flashT <= 0) this.mats.forEach((m, i) => { m.emissive.copy(this.baseE[i][0]); m.emissiveIntensity = this.baseE[i][1]; });
     }
   }
-  dispose() { this.group.parent && this.group.parent.remove(this.group); this.root.traverse((o) => { if (o.isMesh) o.material.dispose(); }); }
+  dispose() { this.group.parent && this.group.parent.remove(this.group); this.root.traverse((o) => { if (o.isMesh && !o.userData.outline) o.material.dispose(); }); }
 }
 
 // ---------------------------------------------------------------

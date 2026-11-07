@@ -11,9 +11,10 @@ import { SLOTS, RARITY, randomDrop, makeItem, starterGear, looksOf, rollRarity }
 import { SFX, unlock, settings, applyVolumes, setMusic, musicTick } from './audio.js';
 import { input, setupInput, consume } from './input.js';
 import * as UI from './ui.js';
+import { ANIME, toon } from './style.js';
 import { R, clamp, lerp, damp, angWrap, angDiff, store, $ } from './util.js';
 
-export const APP_VERSION = '3.0.0';
+export const APP_VERSION = '3.1.0';
 
 // ---------------------------------------------------------------
 // MOTEUR 3D
@@ -26,8 +27,9 @@ const DPR = window.devicePixelRatio || 1;
 const res = { max: Math.min(DPR, 1.6), min: Math.min(DPR, 0.85), cur: Math.min(DPR, 1.35), acc: 0, n: 0, calm: 0 };
 renderer.setPixelRatio(res.cur);
 renderer.outputColorSpace = THREE.SRGBColorSpace;
-renderer.toneMapping = THREE.ACESFilmicToneMapping;
-renderer.toneMappingExposure = 1.25;
+// style animé : rendu « neutre » qui garde les couleurs franches (le rendu « film » les ternit)
+renderer.toneMapping = ANIME ? THREE.NeutralToneMapping : THREE.ACESFilmicToneMapping;
+renderer.toneMappingExposure = ANIME ? 1.05 : 1.25;
 const scene3 = new THREE.Scene();
 scene3.fog = new THREE.Fog(0x120c1c, 10, 42);
 const hemi = new THREE.HemisphereLight(0x8a90ff, 0x3a2030, 1.2); scene3.add(hemi);
@@ -35,7 +37,11 @@ const hemi = new THREE.HemisphereLight(0x8a90ff, 0x3a2030, 1.2); scene3.add(hemi
 const moon = new THREE.DirectionalLight(0xffe2c0, 1.25); moon.position.set(-0.5, 1, -0.35); scene3.add(moon);
 const camera = new THREE.PerspectiveCamera(40, 1, 0.5, 70);
 const heroLight = new THREE.PointLight(0xffd8a8, 14, 11, 1.2); scene3.add(heroLight); // lumière douce autour du héros (lisibilité)
-const THEME_LOOK = {
+const THEME_LOOK = ANIME ? {
+  crypt: { fog: 0x120e24, hemi: [0x9aa8ff, 0x5a3a58, 1.9], name: 'La Crypte' },
+  cave: { fog: 0x081028, hemi: [0x88d0ff, 0x503a78, 1.9], name: 'Les Grottes de cristal' },
+  ruins: { fog: 0x0a1a10, hemi: [0xd0f8c8, 0x4a4a30, 1.85], name: 'Les Ruines englouties' },
+} : {
   crypt: { fog: 0x140e1e, hemi: [0xb0a8ff, 0x5a3a48, 1.6], name: 'La Crypte' },
   cave: { fog: 0x0a1224, hemi: [0x8ac8ff, 0x483060, 1.7], name: 'Les Grottes de cristal' },
   ruins: { fog: 0x0e1a12, hemi: [0xc8f0c0, 0x4a4028, 1.65], name: 'Les Ruines englouties' },
@@ -313,7 +319,7 @@ export function enterFloor(floor, fresh = true) {
   }
   // coffres
   for (const pr of L.props) if (pr.kind === 'chest') {
-    const obj = piece('props', 'chest').clone(true); obj.scale.setScalar(1.1);
+    const obj = piece('props', 'chest').clone(true); obj.scale.setScalar(1.1); obj.traverse((o) => { if (o.isMesh) o.material = toon(o.material); });
     obj.position.set(pr.x, pr.y, pr.z); obj.rotation.y = pr.rot; scene3.add(obj);
     G.chests.push({ x: pr.x, z: pr.z, y: pr.y, obj, open: false });
   }
