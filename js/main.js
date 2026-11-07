@@ -13,7 +13,7 @@ import { input, setupInput, consume } from './input.js';
 import * as UI from './ui.js';
 import { R, clamp, lerp, damp, angWrap, angDiff, store, $ } from './util.js';
 
-export const APP_VERSION = '2.0.0';
+export const APP_VERSION = '2.0.1';
 
 // ---------------------------------------------------------------
 // MOTEUR 3D
@@ -545,7 +545,7 @@ function updatePlayer(dt) {
   const rx = -fz, rz = fx;
   let mx = input.mx, my = input.my;
   const ml = Math.min(1, Math.hypot(mx, my));
-  const dirX = fx * my - rx * mx, dirZ = fz * my - rz * mx;
+  const dirX = fx * my + rx * mx, dirZ = fz * my + rz * mx; // droite du joystick = droite de l'écran
   const dl = Math.hypot(dirX, dirZ) || 1;
   P.moving = ml > 0.15 && ['free', 'attack', 'whirl', 'shout'].includes(P.state);
 
@@ -834,8 +834,8 @@ function updateCamera(dt) {
   const portrait = camera.aspect < 1;
   const side = portrait ? 0.45 : 0.75, dist = portrait ? 4.1 : 3.5;
   const head = P.y + 1.75;
-  let px = P.x - rx * side, pz = P.z - rz * side; // pivot à côté de l'épaule droite
-  if (!walkable(L, px, pz) || !walkable(L, px - rx * 0.4, pz - rz * 0.4)) { px = P.x; pz = P.z; }
+  let px = P.x + rx * side, pz = P.z + rz * side; // pivot à côté de l'épaule droite
+  if (!walkable(L, px, pz) || !walkable(L, px + rx * 0.4, pz + rz * 0.4)) { px = P.x; pz = P.z; }
   const cp = Math.cos(G.camPitch), sp = Math.sin(G.camPitch);
   // recul tant qu'aucun mur ne gêne
   // marge autour de la caméra : les murs lissés (diagonales) et les parois bosselées des grottes

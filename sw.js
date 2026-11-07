@@ -1,6 +1,6 @@
 // Service worker : garde une copie du jeu dans le téléphone pour jouer hors ligne.
 // À chaque mise à jour, changer VERSION ici + APP_VERSION dans js/main.js + version.json.
-const VERSION = 'riftwalker-2.0.0';
+const VERSION = 'riftwalker-2.0.1';
 const FILES = [
   './', 'index.html', 'style.css', 'manifest.json',
   'js/main.js', 'js/assets.js', 'js/character.js', 'js/level.js', 'js/world.js', 'js/items.js', 'js/audio.js', 'js/input.js', 'js/ui.js', 'js/util.js',

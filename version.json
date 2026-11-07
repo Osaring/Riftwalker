@@ -1,4 +1,4 @@
 {
-  "version": "2.0.0",
-  "notes": "Riftwalker 2 : nouveau jeu entièrement en 3e personne"
+  "version": "2.0.1",
+  "notes": "Joystick corrigé (gauche/droite), caméra sur l'épaule droite, mini-carte orientée"
 }

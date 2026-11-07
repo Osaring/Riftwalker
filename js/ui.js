@@ -209,7 +209,9 @@ function updateMinimap(g, P) {
   const mc = $('minimap'), c = mc.getContext('2d'), S = mc.width, sc = 3.2;
   c.clearRect(0, 0, S, S);
   c.save(); c.beginPath(); c.arc(S / 2, S / 2, S / 2, 0, 6.29); c.clip();
-  c.translate(S / 2, S / 2); c.rotate(g.camYaw + Math.PI); c.scale(-sc, sc);
+  // vue tournée avec la caméra : le haut de la mini-carte = là où regarde la caméra
+  const cy = Math.cos(g.camYaw), sy = Math.sin(g.camYaw);
+  c.translate(S / 2, S / 2); c.transform(-cy * sc, -sy * sc, sy * sc, -cy * sc, 0, 0);
   c.imageSmoothingEnabled = false;
   c.drawImage(mapCv, -P.x, -P.z);
   // portail et ennemis repérés
