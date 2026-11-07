@@ -991,6 +991,8 @@ async function boot() {
   UI.loading(1);
   backToTitle();
   checkUpdate(); setInterval(checkUpdate, 5 * 60 * 1000);
+  // on revérifie aussi à chaque retour dans l'app (iPhone : l'app reste souvent en arrière-plan)
+  document.addEventListener('visibilitychange', () => { if (!document.hidden) checkUpdate(); });
   if ('serviceWorker' in navigator) navigator.serviceWorker.register('sw.js').catch(() => {});
 }
 // ---------------------------------------------------------------
