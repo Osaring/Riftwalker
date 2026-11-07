@@ -12,12 +12,14 @@ const HIDES_HAIR = /Hood|Armet|Horns/;
 
 // os des jambes : utilisés pour séparer « haut du corps » et « bas du corps »
 const LOWER = /^(root|pelvis|thigh|calf|foot|ball)/;
-const upperCache = new Map();
-function upperClip(name) {
-  if (upperCache.has(name)) return upperCache.get(name);
-  const c = A.clips[name];
-  const u = new THREE.AnimationClip(name + '@haut', c.duration, c.tracks.filter((t) => !LOWER.test(t.name.split('.')[0])));
-  upperCache.set(name, u); return u;
+const partCache = new Map();
+function partClip(name, part) {
+  const key = name + '@' + part;
+  if (partCache.has(key)) return partCache.get(key);
+  const c = A.clips[name]; if (!c) return null;
+  const keepLow = part === 'bas';
+  const u = new THREE.AnimationClip(key, c.duration, c.tracks.filter((t) => LOWER.test(t.name.split('.')[0]) === keepLow));
+  partCache.set(key, u); return u;
 }
 
 export class Character {
@@ -76,10 +78,6 @@ export class Character {
     if (look.pos) w.position.set(...look.pos);
     this.bones[bone].add(w);
     (this.parts[slot] || (this.parts[slot] = [])).push(w);
-    if (look.glow) this.addWeaponLight(w, look.glow);
-  }
-  addWeaponLight(obj, col) {
-    const l = new THREE.PointLight(col, 0.6, 2.2); l.position.set(0, 0.5, 0); obj.add(l);
   }
 
   clearSlot(slot) {
@@ -131,42 +129,56 @@ export class Character {
 // seulement sur le haut du corps quand le personnage se déplace.
 // ---------------------------------------------------------------
 export class Animator {
+  // L'animation de fond (repos, course…) est jouée en deux moitiés : jambes et haut du corps.
+  // Quand une action passe par-dessus (coup d'épée…), on baisse le fond d'autant que l'action monte :
+  // le geste est joué à 100 % au lieu d'être mélangé à moitié avec la pose de repos.
   constructor(root) {
     this.mixer = new THREE.AnimationMixer(root);
     this.acts = {};
-    this.base = null; this.baseName = '';
+    this.baseL = null; this.baseU = null; this.baseName = ''; this.loops = new Set();
     this.one = null; this.oneName = ''; this.oneEnd = null;
+    this.shots = new Set();
   }
-  act(name, upper = false) {
-    const key = upper ? name + '@haut' : name;
+  act(name, part = '') {
+    const key = part ? name + '@' + part : name;
     if (this.acts[key]) return this.acts[key];
-    const clip = upper ? upperClip(name) : A.clips[name];
+    const clip = part ? partClip(name, part) : A.clips[name];
     if (!clip) return null;
     const a = this.mixer.clipAction(clip);
+    a.upperOnly = part === 'haut';
     this.acts[key] = a; return a;
   }
   // animation de fond en boucle
   loop(name, speed = 1, fade = 0.2) {
-    const a = this.act(name); if (!a) return;
-    a.timeScale = speed;
+    const aL = this.act(name, 'bas'), aU = this.act(name, 'haut'); if (!aL || !aU) return;
+    aL.timeScale = aU.timeScale = speed;
     if (this.baseName === name) return;
-    a.reset(); a.setLoop(THREE.LoopRepeat, Infinity); a.enabled = true; a.setEffectiveWeight(1).play();
-    if (this.base) this.base.crossFadeTo(a, fade, false);
-    this.base = a; this.baseName = name;
+    for (const a of [aL, aU]) { a.reset(); a.setLoop(THREE.LoopRepeat, Infinity); a.enabled = true; a.setEffectiveWeight(1); a.play(); this.loops.add(a); }
+    if (this.baseL) { this.baseL.crossFadeTo(aL, fade, false); this.baseU.crossFadeTo(aU, fade, false); }
+    this.baseL = aL; this.baseU = aU; this.baseName = name;
   }
   // action unique ; upper = ne bouge que le haut du corps
   play(name, { speed = 1, fade = 0.08, upper = false, from = 0, onEnd = null, hold = false } = {}) {
-    const a = this.act(name, upper); if (!a) return 0;
+    const a = this.act(name, upper ? 'haut' : ''); if (!a) return 0;
     if (this.one && this.one !== a) this.one.fadeOut(fade);
     a.reset(); a.setLoop(THREE.LoopOnce, 1); a.clampWhenFinished = true; a.timeScale = speed;
     a.time = from * a.getClip().duration;
     a.setEffectiveWeight(1); a.fadeIn(fade); a.play();
+    this.shots.add(a);
     this.one = a; this.oneName = name; this.oneEnd = onEnd; this.oneHold = hold;
     return (a.getClip().duration * (1 - from)) / speed;
   }
   stopOne(fade = 0.15) { if (this.one) { this.one.fadeOut(fade); this.one = null; this.oneName = ''; } }
   get busy() { return !!this.one; }
   update(dt) {
+    // poids du fond = 1 - poids des actions en cours (haut du corps : toutes ; jambes : actions « corps entier »)
+    let wU = 0, wL = 0;
+    for (const a of this.shots) {
+      const w = a.enabled ? a.getEffectiveWeight() : 0;
+      if (w <= 0.001 && a !== this.one) { this.shots.delete(a); continue; }
+      wU = Math.max(wU, w); if (!a.upperOnly) wL = Math.max(wL, w);
+    }
+    for (const a of this.loops) a.weight = a.upperOnly ? 1 - wU : 1 - wL;
     this.mixer.update(dt);
     if (this.one && !this.oneHold) {
       const a = this.one, d = a.getClip().duration;

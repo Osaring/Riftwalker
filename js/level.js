@@ -8,19 +8,20 @@
 import { rng, fbm, noise2, clamp } from './util.js';
 
 export const THEMES = ['crypt', 'cave', 'ruins'];
-export const themeOf = (floor) => THEMES[Math.floor((floor - 1) / 2) % THEMES.length];
+// le biome change tous les 2 étages ; « start » = biome tiré au hasard au début de l'aventure
+export const themeOf = (floor, start = 0) => THEMES[(start + Math.floor((floor - 1) / 2)) % THEMES.length];
 
-export function generateLevel(floor, seed) {
+export function generateLevel(floor, seed, themeStart = 0) {
   for (let attempt = 0; attempt < 30; attempt++) {
-    const L = tryGenerate(floor, (seed + attempt * 7919) >>> 0);
+    const L = tryGenerate(floor, (seed + attempt * 7919) >>> 0, themeStart);
     if (L) return L;
   }
   throw new Error('génération impossible');
 }
 
-function tryGenerate(floor, seed) {
+function tryGenerate(floor, seed, themeStart) {
   const r = rng(seed);
-  const theme = themeOf(floor);
+  const theme = themeOf(floor, themeStart);
   const W = 120, H = 120;
   const N = W * H;
   const grid = new Uint8Array(N);       // 1 = sol praticable
@@ -290,7 +291,7 @@ function tryGenerate(floor, seed) {
     } else if (R0.type === 'exit') {
       // le portail vers l'étage suivant
       R0.portal = { x: cx + 0.5, z: cz + 0.5, y: h };
-      lights.push({ x: cx + 0.5, y: h + 2, z: cz + 0.5, col: 0xb070ff, i: 12, kind: 'portal' });
+      lights.push({ x: cx + 0.5, y: h + 2, z: cz + 0.5, col: 0xb070ff, i: 12, kind: 'portal', off: true }); // s'allume quand le boss tombe
     } else if (theme !== 'cave' && r.chance(0.45) && (R0.shape === 'octo' || R0.shape === 'round' || R0.shape === 'cross')) {
       if (r.chance(0.5)) { P('statue', cxi, czi, { s: 0.45, rot: r.range(0, 6.3) }); block(cxi, czi, 1); }
       else { P('brazier', cxi, czi); block(cxi, czi); lights.push({ x: cxi + 0.5, y: h + 1.6, z: czi + 0.5, col: 0xff8a3a, i: 9, kind: 'fire' }); }

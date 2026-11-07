@@ -1,4 +1,4 @@
 {
-  "version": "2.0.1",
-  "notes": "Joystick corrigé (gauche/droite), caméra sur l'épaule droite, mini-carte orientée"
+  "version": "2.1.0",
+  "notes": "Caméra stable, jeu plus fluide, coups d'épée retravaillés, portail après le boss, biome de départ aléatoire"
 }

@@ -113,7 +113,7 @@ export function fade(on) {
 // ---------------------------------------------------------------
 const nums = [];
 export function damageNumber(x, y, z, v, color, crit, player) { nums.push({ x, y, z, v: String(v), color, crit, player, t: 0, ox: (R() - 0.5) * 0.6 }); if (nums.length > 40) nums.shift(); }
-export function clearOverlay() { oc.setTransform(1, 0, 0, 1, 0, 0); oc.clearRect(0, 0, ov.width, ov.height); }
+export function clearOverlay() { ovDirty = true; oc.setTransform(1, 0, 0, 1, 0, 0); oc.clearRect(0, 0, ov.width, ov.height); }
 const v3 = new THREE.Vector3();
 function proj(camera, x, y, z) { v3.set(x, y, z).project(camera); return [(v3.x * 0.5 + 0.5) * ov.width, (-v3.y * 0.5 + 0.5) * ov.height, v3.z < 1]; }
 function rr(c, x, y, w, h, r) { c.beginPath(); c.roundRect(x, y, w, h, r); }
@@ -132,15 +132,16 @@ export function updateHUD(g, P, camera) {
   $('btnSkill3').classList.toggle('locked', S.skills.shout <= 0);
   $('btnSkill3').querySelector('.lock').style.display = S.skills.shout > 0 ? 'none' : '';
   $('btnPotion').classList.toggle('nores', S.potions <= 0);
-  // surimpression
-  clearOverlay();
+  // surimpression (on ne l'efface que s'il y avait quelque chose dessus)
+  if (ovDirty) clearOverlay();
+  ovDirty = false;
   const c = oc, W = ov.width, Hh = ov.height;
   for (const e of g.enemies) {
     if (e.dead || (!e.aggro && e.hp >= e.maxHp)) continue;
     const [x, y, ok] = proj(camera, e.x, e.y + e.T.height + 0.35, e.z);
     if (!ok || x < 0 || x > W || y < 0 || y > Hh) continue;
     const dd = Math.hypot(e.x - P.x, e.z - P.z); if (dd > 22) continue;
-    const bw = (e.T.boss ? 90 : 50) * k, bh = 6 * k;
+    const bw = (e.T.boss ? 90 : 50) * k, bh = 6 * k; ovDirty = true;
     c.fillStyle = 'rgba(0,0,0,.6)'; rr(c, x - bw / 2 - k, y - k, bw + 2 * k, bh + 2 * k, 3 * k); c.fill();
     c.fillStyle = e.T.boss ? '#ff8a20' : e === g.target ? '#ff3a2a' : '#c82a2a'; rr(c, x - bw / 2, y, Math.max(bh, bw * e.hp / e.maxHp), bh, 3 * k); c.fill();
     if (e.stun > 0) { c.fillStyle = '#ffe58a'; c.font = `900 ${12 * k}px Nunito`; c.textAlign = 'center'; c.fillText('✦ ✦', x, y - 6 * k); }
@@ -151,6 +152,7 @@ export function updateHUD(g, P, camera) {
     const n = nums[i]; n.t += 1 / 60;
     if (n.t > 0.9) { nums.splice(i, 1); continue; }
     const [x, y, ok] = proj(camera, n.x + n.ox, n.y + n.t * 1.1, n.z); if (!ok) continue;
+    ovDirty = true;
     const pop = n.t < 0.1 ? 1 + (0.1 - n.t) * 6 : 1;
     const sz = (n.crit ? 30 : n.player ? 20 : 22) * k * pop;
     c.globalAlpha = Math.min(1, (0.9 - n.t) * 3);
@@ -161,6 +163,7 @@ export function updateHUD(g, P, camera) {
   // cadre de la cible (nom + vie)
   const t = g.target;
   if (t && !t.dead && (t.aggro || t.hp < t.maxHp)) {
+    ovDirty = true;
     const bw = Math.min(240 * k, W * 0.46), by = (W < Hh ? 120 : 14) * k + safeTop() * k, bx = (W - bw) / 2;
     c.fillStyle = 'rgba(10,8,20,.72)'; rr(c, bx - 8 * k, by - 4 * k, bw + 16 * k, 30 * k, 8 * k); c.fill();
     c.font = `800 ${12 * k}px Nunito`; c.fillStyle = t.T.boss ? '#ffb05a' : '#f0e6ff'; c.fillText(t.T.boss ? '☠ ' + t.T.name : t.T.name, W / 2, by + 9 * k);
@@ -169,12 +172,14 @@ export function updateHUD(g, P, camera) {
   }
   // vie basse : bords rouges qui battent
   if (hpF < 0.3) {
+    ovDirty = true;
     const a = 0.25 + 0.15 * Math.sin(g.time * 6);
     const gr = c.createRadialGradient(W / 2, Hh / 2, Math.min(W, Hh) * 0.3, W / 2, Hh / 2, Math.max(W, Hh) * 0.7);
     gr.addColorStop(0, 'rgba(150,0,0,0)'); gr.addColorStop(1, `rgba(170,0,0,${a})`); c.fillStyle = gr; c.fillRect(0, 0, W, Hh);
   }
-  updateMinimap(g, P);
+  if ((mmFrame = (mmFrame + 1) % 2) === 0) updateMinimap(g, P); // une image sur deux suffit
 }
+let ovDirty = true, mmFrame = 0;
 let _sat = null;
 function safeTop() { if (_sat === null) { const d = document.createElement('div'); d.style.cssText = 'position:fixed;top:0;height:env(safe-area-inset-top);visibility:hidden'; document.body.appendChild(d); _sat = d.offsetHeight || 0; d.remove(); } return _sat; }
 function set(sel, prop, val) { if (lastHud[sel + prop] === val) return; lastHud[sel + prop] = val; document.querySelector(sel).style[prop] = val; }
@@ -186,7 +191,9 @@ function cd(id, v, max) {
     if (lastHud[id] && !txt) { $(id).classList.remove('ready'); void $(id).offsetWidth; $(id).classList.add('ready'); }
     lastHud[id] = txt; el.textContent = txt;
   }
-  el.style.background = v > 0.05 ? `conic-gradient(rgba(0,0,0,.62) ${v / max * 360}deg, transparent 0)` : 'none';
+  // on ne touche au style que s'il change vraiment (chaque modification coûte un recalcul de page)
+  const bg = v > 0.05 ? `conic-gradient(rgba(0,0,0,.62) ${Math.round(v / max * 90) * 4}deg, transparent 0)` : 'none';
+  if (lastHud[id + 'bg'] !== bg) { lastHud[id + 'bg'] = bg; el.style.background = bg; }
 }
 
 // ---------------------------------------------------------------
@@ -215,7 +222,7 @@ function updateMinimap(g, P) {
   c.imageSmoothingEnabled = false;
   c.drawImage(mapCv, -P.x, -P.z);
   // portail et ennemis repérés
-  if (L.portal && seen[Math.floor(L.portal.z) * L.W + Math.floor(L.portal.x)]) { c.fillStyle = g.bossAlive ? '#8a5aff' : '#e0b0ff'; c.beginPath(); c.arc(L.portal.x - P.x, L.portal.z - P.z, 1.6, 0, 6.29); c.fill(); }
+  if (L.portal && !g.bossAlive && seen[Math.floor(L.portal.z) * L.W + Math.floor(L.portal.x)]) { c.fillStyle = g.bossAlive ? '#8a5aff' : '#e0b0ff'; c.beginPath(); c.arc(L.portal.x - P.x, L.portal.z - P.z, 1.6, 0, 6.29); c.fill(); }
   c.fillStyle = '#ff4a3a';
   for (const e of g.enemies) if (!e.dead && e.aggro) { c.beginPath(); c.arc(e.x - P.x, e.z - P.z, e.T.boss ? 1.4 : 0.8, 0, 6.29); c.fill(); }
   c.restore();

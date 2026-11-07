@@ -13,14 +13,18 @@ import { input, setupInput, consume } from './input.js';
 import * as UI from './ui.js';
 import { R, clamp, lerp, damp, angWrap, angDiff, store, $ } from './util.js';
 
-export const APP_VERSION = '2.0.1';
+export const APP_VERSION = '2.1.0';
 
 // ---------------------------------------------------------------
 // MOTEUR 3D
 // ---------------------------------------------------------------
 const canvas = $('view');
 const renderer = new THREE.WebGLRenderer({ canvas, antialias: true, powerPreference: 'high-performance' });
-renderer.setPixelRatio(Math.min(window.devicePixelRatio || 1, 1.75));
+// résolution dynamique : on démarre net, et si l'iPhone n'arrive plus à suivre 60 images/s,
+// on baisse un peu la définition (invisible en pleine action) plutôt que de saccader
+const DPR = window.devicePixelRatio || 1;
+const res = { max: Math.min(DPR, 1.6), min: Math.min(DPR, 0.85), cur: Math.min(DPR, 1.35), acc: 0, n: 0, calm: 0 };
+renderer.setPixelRatio(res.cur);
 renderer.outputColorSpace = THREE.SRGBColorSpace;
 renderer.toneMapping = THREE.ACESFilmicToneMapping;
 renderer.toneMappingExposure = 1.15;
@@ -36,6 +40,15 @@ const THEME_LOOK = {
   ruins: { fog: 0x142018, hemi: [0xb0e0b0, 0x3a3020, 1.3], name: 'Les Ruines englouties' },
 };
 
+function adaptRes(dt) {
+  res.acc += dt; res.n++;
+  if (res.acc < 1) return;
+  const avg = res.acc / res.n; res.acc = 0; res.n = 0;
+  let next = res.cur;
+  if (avg > 0.0195) { next = Math.max(res.min, res.cur - (avg > 0.026 ? 0.2 : 0.1)); res.calm = 0; }
+  else if (avg < 0.0172) { res.calm++; if (res.calm >= 5) { next = Math.min(res.max, res.cur + 0.05); res.calm = 0; } }
+  if (Math.abs(next - res.cur) > 0.001) { res.cur = next; renderer.setPixelRatio(next); renderer.setSize(window.innerWidth, window.innerHeight, false); }
+}
 function resize() {
   const w = window.innerWidth, h = window.innerHeight;
   renderer.setSize(w, h, false);
@@ -51,7 +64,7 @@ addEventListener('resize', resize);
 // ---------------------------------------------------------------
 const SAVE_KEY = 'rw2_save';
 function newSave() {
-  return { v: 2, level: 1, xp: 0, gold: 0, potions: 3, equip: starterGear(), bag: [], skills: { charge: 1, whirl: 1, shout: 0, vigor: 0, might: 0, fury: 0, iron: 0 }, points: 0, floor: 1, best: 1, kills: 0, sound: true, music: true };
+  return { v: 2, themeStart: Math.floor(Math.random() * 3), level: 1, xp: 0, gold: 0, potions: 3, equip: starterGear(), bag: [], skills: { charge: 1, whirl: 1, shout: 0, vigor: 0, might: 0, fury: 0, iron: 0 }, points: 0, floor: 1, best: 1, kills: 0, sound: true, music: true };
 }
 export const G = {
   save: store.get(SAVE_KEY) || newSave(),
@@ -62,6 +75,7 @@ export const G = {
   target: null, inCombat: false, bossAlive: false,
 };
 if (G.save.v !== 2) G.save = newSave();
+if (G.save.themeStart === undefined) G.save.themeStart = Math.floor(Math.random() * 3); // biome de départ au hasard
 settings.sound = G.save.sound !== false; settings.music = G.save.music !== false;
 export function saveGame() { store.set(SAVE_KEY, G.save); }
 
@@ -155,9 +169,13 @@ export function burst(x, y, z, n, col, { speed = 4, size = 0.25, life = 0.5, gra
     parts.size[k] = size * (0.6 + R() * 0.8); parts.life[k] = parts.max[k] = life * (0.6 + R() * 0.8); parts.grav[k] = grav;
   }
 }
+let partsAlive = true;
 function updateParts(dt) {
+  if (!partsAlive && parts.n === partsN0) return; // rien à animer
+  partsN0 = parts.n; let alive = false;
   for (let k = 0; k < PMAX; k++) {
     if (parts.life[k] <= 0) { parts.size[k] = 0; continue; }
+    alive = true;
     parts.life[k] -= dt;
     const f = Math.max(0, parts.life[k] / parts.max[k]);
     parts.vel[k * 3 + 1] -= parts.grav[k] * dt;
@@ -166,39 +184,65 @@ function updateParts(dt) {
     if (parts.life[k] <= 0) parts.size[k] = 0;
     else parts.size[k] *= f > 0.3 ? 1 : 0.92;
   }
+  partsAlive = alive;
   pgeo.attributes.position.needsUpdate = true; pgeo.attributes.size.needsUpdate = true; pgeo.attributes.color.needsUpdate = true;
 }
+let partsN0 = 0;
 
-// traînée de l'épée : un ruban lumineux qui suit la lame pendant les coups
-const TRAIL_N = 14;
+// traînée de l'épée : un ruban lumineux, lissé en courbe, qui ne s'allume que pendant la frappe
+const TRAIL_SEG = 40, TRAIL_LIFE = 0.16;
 const trailGeo = new THREE.BufferGeometry();
-const trailPos = new Float32Array(TRAIL_N * 2 * 3), trailA = new Float32Array(TRAIL_N * 2);
+const trailPos = new Float32Array(TRAIL_SEG * 2 * 3), trailA = new Float32Array(TRAIL_SEG * 2);
 trailGeo.setAttribute('position', new THREE.BufferAttribute(trailPos, 3));
 trailGeo.setAttribute('alpha', new THREE.BufferAttribute(trailA, 1));
-const tIdx = []; for (let i = 0; i < TRAIL_N - 1; i++) { const a = i * 2; tIdx.push(a, a + 1, a + 2, a + 1, a + 3, a + 2); }
+const tIdx = []; for (let i = 0; i < TRAIL_SEG - 1; i++) { const a = i * 2; tIdx.push(a, a + 1, a + 2, a + 1, a + 3, a + 2); }
 trailGeo.setIndex(tIdx);
-const trailMat = new THREE.ShaderMaterial({ uniforms: { col: { value: new THREE.Color(0xffe0a0) } }, vertexShader: 'attribute float alpha; varying float va; void main(){ va = alpha; gl_Position = projectionMatrix * modelViewMatrix * vec4(position,1.0); }', fragmentShader: 'uniform vec3 col; varying float va; void main(){ gl_FragColor = vec4(col, va * 0.75); }', transparent: true, depthWrite: false, blending: THREE.AdditiveBlending, side: THREE.DoubleSide });
+const trailMat = new THREE.ShaderMaterial({
+  uniforms: { col: { value: new THREE.Color(0xffd890) } },
+  vertexShader: 'attribute float alpha; varying float va; void main(){ va = alpha; gl_Position = projectionMatrix * modelViewMatrix * vec4(position,1.0); }',
+  // cœur blanc près de la lame, couleur dorée qui s'estompe vers la queue
+  fragmentShader: 'uniform vec3 col; varying float va; void main(){ vec3 c = mix(col, vec3(1.0), va * va * 0.7); gl_FragColor = vec4(c, va * va * 0.7); }',
+  transparent: true, depthWrite: false, blending: THREE.AdditiveBlending, side: THREE.DoubleSide,
+});
 const trail = new THREE.Mesh(trailGeo, trailMat); trail.frustumCulled = false; scene3.add(trail);
-const trailPts = []; let trailOn = 0;
+const trailPts = []; let trailOn = 0, trailClock = 0;
 const vA = new THREE.Vector3(), vB = new THREE.Vector3();
+function cr(p0, p1, p2, p3, t) { // courbe de Catmull-Rom : passe par les points en arrondissant les angles
+  const t2 = t * t, t3 = t2 * t;
+  return 0.5 * (2 * p1 + (-p0 + p2) * t + (2 * p0 - 5 * p1 + 4 * p2 - p3) * t2 + (-p0 + 3 * p1 - 3 * p2 + p3) * t3);
+}
 function updateTrail(dt) {
+  trailClock += dt;
   const w = P.ch && P.ch.parts.mainhand && P.ch.parts.mainhand[0];
   if (w && trailOn > 0) {
+    if (w.userData.tipY === undefined) { // longueur de la lame, mesurée une fois par arme
+      let my = 0.6; w.traverse((o) => { if (o.isMesh) { o.geometry.computeBoundingBox(); my = Math.max(my * (my === 0.6 ? 0 : 1), o.position.y + o.geometry.boundingBox.max.y * o.scale.y); } });
+      w.userData.tipY = my;
+    }
+    const tip = w.userData.tipY;
     w.updateWorldMatrix(true, false);
-    vA.set(0, 0.25, 0).applyMatrix4(w.matrixWorld); vB.set(0, 1.05, 0).applyMatrix4(w.matrixWorld);
-    trailPts.unshift([vA.clone(), vB.clone()]);
-  } else trailPts.unshift(null);
+    vA.set(0, tip * 0.45, 0).applyMatrix4(w.matrixWorld); vB.set(0, tip, 0).applyMatrix4(w.matrixWorld);
+    trailPts.unshift({ a: [vA.x, vA.y, vA.z], b: [vB.x, vB.y, vB.z], t: trailClock });
+  }
   trailOn -= dt;
-  while (trailPts.length > TRAIL_N) trailPts.pop();
-  let last = null;
-  for (let i = 0; i < TRAIL_N; i++) {
-    const p = trailPts[i] || last; if (p) last = p;
-    const a = trailPts[i] ? 1 - i / TRAIL_N : 0;
-    if (p) { trailPos.set([p[0].x, p[0].y, p[0].z, p[1].x, p[1].y, p[1].z], i * 6); }
-    trailA[i * 2] = a * 0.2; trailA[i * 2 + 1] = a;
+  while (trailPts.length && trailClock - trailPts[trailPts.length - 1].t > TRAIL_LIFE) trailPts.pop();
+  const n = trailPts.length;
+  trail.visible = n >= 2;
+  if (!trail.visible) return;
+  // on subdivise entre les points enregistrés pour obtenir un arc bien rond
+  for (let i = 0; i < TRAIL_SEG; i++) {
+    const f = (i / (TRAIL_SEG - 1)) * (n - 1), j = Math.min(n - 2, Math.floor(f)), u = f - j;
+    const p0 = trailPts[Math.max(0, j - 1)], p1 = trailPts[j], p2 = trailPts[j + 1], p3 = trailPts[Math.min(n - 1, j + 2)];
+    const age = (trailClock - (p1.t + (p2.t - p1.t) * u)) / TRAIL_LIFE;
+    const life = Math.max(0, 1 - age) * (1 - i / TRAIL_SEG);
+    for (let c = 0; c < 3; c++) {
+      const A = cr(p0.a[c], p1.a[c], p2.a[c], p3.a[c], u), B = cr(p0.b[c], p1.b[c], p2.b[c], p3.b[c], u);
+      // la base se resserre vers la pointe en vieillissant : forme de croissant
+      trailPos[i * 6 + c] = B + (A - B) * (0.2 + 0.8 * life); trailPos[i * 6 + 3 + c] = B;
+    }
+    trailA[i * 2] = life * 0.15; trailA[i * 2 + 1] = life;
   }
   trailGeo.attributes.position.needsUpdate = true; trailGeo.attributes.alpha.needsUpdate = true;
-  trail.visible = trailPts.some(Boolean);
 }
 
 // signal d'attaque au sol (cercle ou cône rouge qui se remplit)
@@ -238,7 +282,7 @@ export function enterFloor(floor, fresh = true) {
   G.save.floor = floor; G.save.best = Math.max(G.save.best, floor);
   const seed = fresh ? (Date.now() ^ (floor * 2654435761)) >>> 0 : (G.save.seed || 1);
   G.save.seed = seed;
-  const L = generateLevel(floor, seed);
+  const L = generateLevel(floor, seed, G.save.themeStart);
   G.L = L;
   const look = THEME_LOOK[L.theme];
   scene3.fog.color.setHex(look.fog); renderer.setClearColor(look.fog);
@@ -322,7 +366,7 @@ function hitEnemy(e, base, { heavy = false, kb = 0.4, stun = 0, from = null } = 
   e.ch.flash(0xffffff, 0.12);
   crit ? SFX.crit() : SFX.hit();
   P.rage = Math.min(100, P.rage + (crit ? 10 : 6));
-  G.hitstop = Math.max(G.hitstop, heavy || crit ? 0.085 : 0.05);
+  G.hitstop = Math.max(G.hitstop, heavy || crit ? 0.075 : 0.035);
   G.shake = Math.max(G.shake, heavy || crit ? 0.18 : 0.08);
   // recul et étourdissement
   const ax = e.x - (from ? from.x : P.x), az = e.z - (from ? from.z : P.z), al = Math.hypot(ax, az) || 1;
@@ -357,6 +401,8 @@ function killEnemy(e) {
     dropItem(e.x + 1, e.z, makeItem(SLOTS[Math.floor(R() * SLOTS.length)], ilvl + 1, Math.max(3, rollRarity(20))));
     dropItem(e.x - 1, e.z, randomDrop(ilvl + 1, 15));
     UI.banner('Seigneur vaincu', 'Le portail est ouvert');
+    G.world.openPortal(); SFX.portal();
+    burst(G.L.portal.x, G.L.portal.y + 1.9, G.L.portal.z, 70, 0xb070ff, { speed: 5, size: 0.35, life: 1.2, grav: -1 });
     G.shake = 0.4; G.hitstop = 0.25;
   } else if (R() < (e.type === 'brute' ? 0.55 : 0.2)) dropItem(e.x, e.z, randomDrop(ilvl, e.type === 'brute' ? 8 : 0));
   if (R() < 0.07) dropPotion(e.x, e.z);
@@ -500,22 +546,29 @@ function flowDir(e) {
 // ---------------------------------------------------------------
 // MISE À JOUR DU HÉROS
 // ---------------------------------------------------------------
+// Les 3 coups viennent d'un seul enchaînement animé d'un bloc (Sword_Regular_Combo) : chaque coup
+// est un morceau de cette animation, donc le passage d'un coup au suivant est naturel.
+// s / e = début / fin du morceau, hit = instant où la lame frappe (en secondes dans l'animation)
+const COMBO = 'Sword_Regular_Combo', COMBO_DUR = 3.0;
 const ATK = [
-  { clip: 'Sword_Regular_A', rec: 'Sword_Regular_A_Rec', hit: 0.62, speed: 1.2, mult: 1, range: 2.5, arc: 1.25 },
-  { clip: 'Sword_Regular_B', rec: 'Sword_Regular_B_Rec', hit: 0.6, speed: 1.15, mult: 1.1, range: 2.5, arc: 1.25 },
-  { clip: 'Sword_Regular_C', rec: null, hit: 0.4, speed: 1.75, mult: 1.9, range: 2.8, arc: 1.5, heavy: true },
+  { s: 0.0, e: 0.42, hit: 0.235, mult: 1, range: 2.5, arc: 1.3, lunge: 0.4 },
+  { s: 0.42, e: 0.98, hit: 0.715, mult: 1.1, range: 2.5, arc: 1.3, lunge: 0.45 },
+  { s: 0.98, e: 1.95, hit: 1.545, mult: 1.9, range: 2.9, arc: 1.7, lunge: 0.7, heavy: true },
 ];
+const ATK_SPEED = 1.15;
 function startAttack(step) {
   const A = ATK[step];
-  P.state = 'attack'; P.combo = step; P.queued = false; P.hitDone = false;
-  const sp = A.speed * P.st.atkSpeed;
-  P.t = P.ch.anim.play(A.clip, { speed: sp, upper: P.moving && step < 2, fade: 0.06 });
-  P.atkDur = P.t; P.atkEl = 0;
+  const chained = P.state === 'attack' && step === P.combo + 1 && P.ch.anim.oneName === COMBO;
+  P.state = 'attack'; P.combo = step; P.queued = false; P.hitDone = false; P.lunged = 0; P.swung = false;
+  P.atkSp = ATK_SPEED * P.st.atkSpeed;
+  if (!chained) {
+    // nouvelle série : on lance l'animation au début du morceau (seulement le haut du corps si on marche)
+    P.ch.anim.play(COMBO, { speed: P.atkSp, upper: P.moving, from: A.s / COMBO_DUR, fade: 0.1, hold: true });
+    P.clipT = A.s;
+  } else if (P.ch.anim.one) P.ch.anim.one.timeScale = P.atkSp; // l'animation continue toute seule
   const t = G.target && !G.target.dead ? G.target : pickTarget(4.5);
   if (t) { G.target = t; P.wantFace = Math.atan2(t.x - P.x, t.z - P.z); }
   else if (!P.moving) P.wantFace = G.camYaw;
-  SFX.swing(step === 2 ? 0.7 : 1);
-  trailOn = P.t * 0.85;
 }
 function doHit(A) {
   const fa = P.face;
@@ -529,9 +582,7 @@ function doHit(A) {
     hitEnemy(e, P.st.dmg * A.mult, { heavy: A.heavy, kb: A.heavy ? 1.2 : 0.4 });
     any = true;
   }
-  if (!any) SFX.swing(0.6);
-  // petit élan vers l'avant
-  moveCircle(G.L, P, Math.sin(fa) * 0.25, Math.cos(fa) * 0.25, 0.38);
+  return any;
 }
 function updatePlayer(dt) {
   const L = G.L, st = P.st;
@@ -554,7 +605,7 @@ function updatePlayer(dt) {
     P.state = 'roll'; P.t = 0.55; P.inv = 0.5; P.cd.roll = 0.75;
     P.rollX = ml > 0.15 ? dirX / dl : -fx; P.rollZ = ml > 0.15 ? dirZ / dl : -fz;
     P.face = Math.atan2(P.rollX, P.rollZ);
-    P.ch.anim.play('Roll', { speed: 3.2, fade: 0.05 }); SFX.roll(); trailOn = 0;
+    P.ch.anim.play('Roll', { speed: 3.2, fade: 0.08 }); SFX.roll(); trailOn = 0; P.swung = false;
     burst(P.x, P.y + 0.2, P.z, 10, 0xa898c0, { speed: 2, size: 0.4, life: 0.5, grav: 1 });
   }
   if (consume('potion') && P.cd.potion <= 0 && G.save.potions > 0 && P.hp < st.maxHp && P.state !== 'roll') {
@@ -589,7 +640,7 @@ function updatePlayer(dt) {
   }
   const atkHeld = input.held.attack;
   if ((consume('attack') || atkHeld) && P.state === 'free') startAttack(0);
-  else if (P.state === 'attack' && (input.pressed.has('attack') || atkHeld) && P.atkEl > P.atkDur * 0.35) { input.pressed.delete('attack'); P.queued = true; }
+  else if (P.state === 'attack' && (input.pressed.has('attack') || atkHeld) && P.clipT > ATK[P.combo].s + 0.08) { input.pressed.delete('attack'); P.queued = true; }
 
   // états
   let speed = 0;
@@ -600,15 +651,30 @@ function updatePlayer(dt) {
       if (ml > 0.15) P.wantFace = Math.atan2(dirX, dirZ);
       break;
     case 'attack': {
-      const A = ATK[P.combo]; P.atkEl += dt;
-      speed = P.moving ? 1.6 : 0;
-      if (P.moving && !(G.target && !G.target.dead)) P.wantFace = Math.atan2(dirX, dirZ);
-      if (G.target && !G.target.dead) P.wantFace = Math.atan2(G.target.x - P.x, G.target.z - P.z);
-      if (!P.hitDone && P.atkEl >= P.atkDur * A.hit) { P.hitDone = true; doHit(A); }
-      if (P.t <= 0) {
-        if (P.queued && P.combo < 2) startAttack(P.combo + 1);
-        else { P.state = 'free'; if (A.rec && !P.moving) P.ch.anim.play(A.rec, { speed: 1.4, upper: true }); else P.ch.anim.stopOne(0.15); }
-      }
+      const A = P.combo >= 0 ? ATK[P.combo] : null;
+      if (A) {
+        P.clipT += dt * P.atkSp;
+        speed = P.moving ? 1.6 : 0;
+        if (P.moving && !(G.target && !G.target.dead)) P.wantFace = Math.atan2(dirX, dirZ);
+        if (G.target && !G.target.dead && Math.hypot(G.target.x - P.x, G.target.z - P.z) < 6) P.wantFace = Math.atan2(G.target.x - P.x, G.target.z - P.z);
+        // son du coup juste avant l'impact, traînée de lame seulement pendant la frappe
+        if (!P.swung && P.clipT >= A.hit - 0.1) { P.swung = true; SFX.swing(A.heavy ? 0.7 : 1); }
+        if (P.clipT >= A.hit - 0.12 && P.clipT <= A.hit + 0.08) trailOn = 0.05;
+        // élan vers l'avant réparti autour de la frappe (plus de « téléportation »)
+        const lw = A.heavy ? 0.22 : 0.16;
+        if (P.clipT > A.hit - lw && P.lunged < A.lunge) {
+          const st = Math.min(A.lunge - P.lunged, (A.lunge / lw) * dt * P.atkSp);
+          const near = G.target && !G.target.dead && Math.hypot(G.target.x - P.x, G.target.z - P.z) < 1.1 + G.target.rad;
+          if (!near) moveCircle(L, P, Math.sin(P.face) * st, Math.cos(P.face) * st, 0.38);
+          P.lunged += st;
+        }
+        if (!P.hitDone && P.clipT >= A.hit) { P.hitDone = true; doHit(A); }
+        if (P.clipT >= A.e) {
+          P.swung = false;
+          if (P.queued && P.combo < 2) startAttack(P.combo + 1);
+          else { P.state = 'free'; P.ch.anim.stopOne(P.combo === 2 ? 0.35 : 0.25); }
+        }
+      } else if (P.t <= 0) { P.state = 'free'; P.ch.anim.stopOne(0.2); }
       break;
     }
     case 'roll': {
@@ -633,8 +699,8 @@ function updatePlayer(dt) {
         // impact
         if (t && !t.dead && d <= reach + 0.5) hitEnemy(t, P.st.dmg * (1.3 + G.save.skills.charge * 0.15), { heavy: true, kb: 1.4, stun: 1.2 + G.save.skills.charge * 0.2 });
         P.rage = Math.min(100, P.rage + 15);
-        P.state = 'attack'; P.combo = 2; P.hitDone = true; P.queued = false;
-        P.t = P.ch.anim.play('Sword_Attack', { speed: 2.2, from: 0.3 }) * 0.6; P.atkDur = P.t; P.atkEl = 0; trailOn = 0.3;
+        P.state = 'attack'; P.combo = -1; P.hitDone = true; P.queued = false;
+        P.t = P.ch.anim.play('Sword_Attack', { speed: 2.2, from: 0.3 }) * 0.6; trailOn = 0.25;
         G.shake = 0.22;
       }
       break;
@@ -677,11 +743,7 @@ function updatePlayer(dt) {
   heroLight.position.set(P.x, P.y + 2.6, P.z);
 
   // portail
-  if (L.portal && Math.hypot(P.x - L.portal.x, P.z - L.portal.z) < 1.6) {
-    if (G.bossAlive) { if (!P.sealMsg) { UI.lootMsg('Le portail est scellé : terrasse le Seigneur des Failles.', '#c9a2ff'); P.sealMsg = 3; } }
-    else nextFloor();
-  }
-  if (P.sealMsg) P.sealMsg = Math.max(0, P.sealMsg - dt);
+  if (L.portal && !G.bossAlive && G.world.portal && G.world.portal.userData.openT > 0.6 && Math.hypot(P.x - L.portal.x, P.z - L.portal.z) < 1.6) nextFloor();
 }
 let changing = false;
 function nextFloor() {
@@ -816,8 +878,10 @@ function updateProjs(dt) {
 // ---------------------------------------------------------------
 // CAMÉRA par-dessus l'épaule (façon PUBG Mobile)
 // ---------------------------------------------------------------
+const tv = new THREE.Vector3();
 let camInit = false;
-const camPos = new THREE.Vector3(), camLook = new THREE.Vector3(), tv = new THREE.Vector3();
+// état lissé de la caméra : point suivi, décalage d'épaule, distance de recul
+const cam = { fx: 0, fy: 0, fz: 0, side: 0.75, back: 3.5, shakeT: 0 };
 function updateCamera(dt) {
   // glisser le doigt : tourner / regarder plus haut ou plus bas
   if (input.camDX || input.camDY) {
@@ -828,36 +892,48 @@ function updateCamera(dt) {
   // en combat, la caméra garde doucement la cible dans le cadre
   if (G.target && !G.target.dead && G.inCombat && G.camManual <= 0 && P.state !== 'dead') {
     const want = Math.atan2(G.target.x - P.x, G.target.z - P.z), d = angWrap(want - G.camYaw);
-    if (Math.abs(d) > 0.35 && Math.hypot(G.target.x - P.x, G.target.z - P.z) > 1.5) G.camYaw += d * Math.min(1, dt * 1.8);
+    if (Math.abs(d) > 0.5 && Math.hypot(G.target.x - P.x, G.target.z - P.z) > 1.8) G.camYaw += d * Math.min(1, dt * 1.4);
   }
   const L = G.L, [fx, fz] = camFwd(), rx = -fz, rz = fx;
   const portrait = camera.aspect < 1;
-  const side = portrait ? 0.45 : 0.75, dist = portrait ? 4.1 : 3.5;
-  const head = P.y + 1.75;
-  let px = P.x + rx * side, pz = P.z + rz * side; // pivot à côté de l'épaule droite
-  if (!walkable(L, px, pz) || !walkable(L, px + rx * 0.4, pz + rz * 0.4)) { px = P.x; pz = P.z; }
+  const sideWant0 = portrait ? 0.45 : 0.75, dist = portrait ? 4.1 : 3.5;
+  // 1) point suivi : la position du héros, très légèrement lissée (la caméra et le point visé
+  //    suivent le MÊME point, donc la distance ne « respire » plus quand on court puis s'arrête)
+  const hy = P.y + 1.75;
+  if (!camInit) { cam.fx = P.x; cam.fy = hy; cam.fz = P.z; cam.side = sideWant0; cam.back = dist; }
+  const kf = 1 - Math.exp(-dt * 30), ky = 1 - Math.exp(-dt * 10);
+  cam.fx += (P.x - cam.fx) * kf; cam.fz += (P.z - cam.fz) * kf; cam.fy += (hy - cam.fy) * ky;
+  // 2) décalage d'épaule : glisse doucement vers le centre si un mur est collé à droite
+  const sideWant = walkable(L, cam.fx + rx * (sideWant0 + 0.4), cam.fz + rz * (sideWant0 + 0.4)) ? sideWant0 : 0;
+  cam.side += (sideWant - cam.side) * (1 - Math.exp(-dt * 5));
+  const px = cam.fx + rx * cam.side, pz = cam.fz + rz * cam.side;
+  // 3) recul : on cherche jusqu'où on peut reculer sans entrer dans un mur
   const cp = Math.cos(G.camPitch), sp = Math.sin(G.camPitch);
-  // recul tant qu'aucun mur ne gêne
-  // marge autour de la caméra : les murs lissés (diagonales) et les parois bosselées des grottes
-  // débordent un peu sur les cases ; on garde ~45 cm de distance
   const M = L.theme === 'cave' ? 0.7 : 0.45;
   const clear = (x, z) => walkable(L, x, z) && walkable(L, x + M, z) && walkable(L, x - M, z) && walkable(L, x, z + M) && walkable(L, x, z - M);
-  let back = dist;
-  for (let k = 0.3; k <= dist; k += 0.15) {
-    const x = px - fx * k * cp, z = pz - fz * k * cp, y = head + k * sp + 0.25;
-    if (!clear(x, z) || y > ceilAt(L, x, z) - 0.4) { back = Math.max(0.5, k - 0.2); break; }
+  let backWant = dist;
+  for (let k = 0.3; k <= dist; k += 0.1) {
+    const x = px - fx * k * cp, z = pz - fz * k * cp, y = cam.fy + k * sp + 0.25;
+    if (!clear(x, z) || y > ceilAt(L, x, z) - 0.4) { backWant = Math.max(0.5, k - 0.15); break; }
   }
+  // se rapproche vite (pour ne jamais traverser un mur) mais ne repart en arrière que lentement :
+  // fini le zoom / dézoom en rafale quand on longe un mur ou qu'on tourne près d'un pilier
+  if (backWant < cam.back) cam.back += (backWant - cam.back) * (1 - Math.exp(-dt * 22));
+  else cam.back += Math.min((backWant - cam.back) * (1 - Math.exp(-dt * 2.4)), 2.2 * dt);
+  if (!camInit) cam.back = backWant;
+  const back = cam.back;
   // dos au mur : la caméra monte et regarde par-dessus l'épaule au lieu de rentrer dans le héros
   const close = Math.max(0, 1.8 - back);
-  let cx = px - fx * back * cp, cz = pz - fz * back * cp, cy = Math.min(head + back * sp + 0.25 + close * 0.9, ceilAt(L, px, pz) - 0.3);
+  const cx = px - fx * back * cp, cz = pz - fz * back * cp;
+  let cy = Math.min(cam.fy + back * sp + 0.25 + close * 0.9, ceilAt(L, px, pz) - 0.3);
   cy = Math.max(cy, groundAt(L, cx, cz) + 0.5);
-  const lx = px + fx * 6, lz = pz + fz * 6, ly = head - 6 * Math.tan(G.camPitch) * 0.6 - close * 1.6;
-  if (!camInit) { camPos.set(cx, cy, cz); camLook.set(lx, ly, lz); camInit = true; }
-  const k = 1 - Math.exp(-dt * 14);
-  camPos.lerp(tv.set(cx, cy, cz), k); camLook.lerp(tv.set(lx, ly, lz), 1 - Math.exp(-dt * 18));
-  const sh = G.shake; G.shake = Math.max(0, G.shake - dt * 1.2);
-  camera.position.set(camPos.x + (Math.random() - 0.5) * sh * 0.6, camPos.y + (Math.random() - 0.5) * sh * 0.6, camPos.z);
-  camera.lookAt(camLook);
+  const lx = px + fx * 6, lz = pz + fz * 6, ly = cam.fy - 6 * Math.tan(G.camPitch) * 0.6 - close * 1.6;
+  camInit = true;
+  // tremblement : une oscillation douce plutôt qu'un bruit aléatoire à chaque image
+  const sh = G.shake; G.shake = Math.max(0, G.shake - dt * 1.4); cam.shakeT += dt;
+  const ox = Math.sin(cam.shakeT * 47) * sh * 0.22, oy = Math.sin(cam.shakeT * 61 + 1.3) * sh * 0.22;
+  camera.position.set(cx + rx * ox, cy + oy, cz + rz * ox);
+  tv.set(lx, ly, lz); camera.lookAt(tv);
 }
 
 // ---------------------------------------------------------------
@@ -881,6 +957,7 @@ function frame(now) {
     updateCamera(dt);
     renderer.render(scene3, camera);
     UI.updateHUD(G, P, camera);
+    adaptRes(dt);
   } else if (G.state === 'dead') {
     P.ch.update(dt); updateParts(dt); updateEnemies(dt * 0.3); G.world.update(dt, P.x, P.z); updateCamera(dt);
     renderer.render(scene3, camera); UI.clearOverlay();
@@ -956,7 +1033,7 @@ function sim(n, dt = 1 / 60) {
   for (let i = 0; i < n; i++) {
     G.time += dt; if (G.hitstop > 0) G.hitstop -= dt;
     G.target = G.target && !G.target.dead && Math.hypot(G.target.x - P.x, G.target.z - P.z) < 16 ? G.target : pickTarget(12);
-    updateFlow(dt); updatePlayer(dt); updateEnemies(dt); updateProjs(dt); updateDrops(dt); updateTele(dt); updateCamera(dt);
+    updateFlow(dt); updatePlayer(dt); updateEnemies(dt); updateProjs(dt); updateDrops(dt); updateTele(dt); updateTrail(dt); G.world.update(dt, P.x, P.z); updateCamera(dt);
   }
 }
 window.__rw = { G, P, scene3, camera, renderer, enterFloor, heroStats, hitEnemy, burst, input, sim };

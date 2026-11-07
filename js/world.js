@@ -290,23 +290,32 @@ export function buildWorld(renderer, scene3, L) {
     // le portail se tourne vers le centre de la salle d'où l'on vient (vers le début du donjon)
     portal.rotation.y = Math.atan2(L.spawn.x - L.portal.x, L.spawn.z - L.portal.z);
     portal.userData = { disc, ring };
+    portal.visible = false; // caché tant que le boss est en vie
     group.add(portal);
   }
 
   scene3.add(group);
 
-  // --- réserve de lumières : les 10 sources les plus proches du joueur s'allument ---
+  // --- réserve de lumières : les 6 sources les plus proches du joueur s'allument ---
   const pool = [];
-  for (let i = 0; i < 10; i++) { const l = new THREE.PointLight(0xffaa66, 0, 16, 1.3); scene3.add(l); pool.push(l); }
+  for (let i = 0; i < 6; i++) { const l = new THREE.PointLight(0xffaa66, 0, 16, 1.3); scene3.add(l); pool.push(l); }
   let time = 0, sortT = 0, near = [];
   function update(dt, px, pz) {
     time += dt;
     flameMat.uniforms.t.value = time;
-    if (portal) { portal.userData.disc.material.uniforms.t.value = time; }
+    if (portal) {
+      portal.userData.disc.material.uniforms.t.value = time;
+      // apparition : le portail grandit en tournoyant
+      if (portal.userData.openT !== undefined && portal.userData.openT < 1) {
+        portal.userData.openT = Math.min(1, portal.userData.openT + dt * 0.8);
+        const k = 1 - Math.pow(1 - portal.userData.openT, 3);
+        portal.scale.setScalar(Math.max(0.01, k)); portal.userData.ring.rotation.z = (1 - k) * 6;
+      }
+    }
     sortT -= dt;
     if (sortT <= 0) {
       sortT = 0.25;
-      near = L.lights.map((l) => [l, (l.x - px) ** 2 + (l.z - pz) ** 2]).filter((a) => a[1] < 30 * 30).sort((a, b) => a[1] - b[1]).slice(0, pool.length).map((a) => a[0]);
+      near = L.lights.filter((l) => !l.off).map((l) => [l, (l.x - px) ** 2 + (l.z - pz) ** 2]).filter((a) => a[1] < 30 * 30).sort((a, b) => a[1] - b[1]).slice(0, pool.length).map((a) => a[0]);
     }
     pool.forEach((pl, i) => {
       const l = near[i];
@@ -320,7 +329,13 @@ export function buildWorld(renderer, scene3, L) {
     scene3.remove(group); pool.forEach((l) => scene3.remove(l));
     group.traverse((o) => { if (o.isMesh || o.isPoints) { if (!o.isInstancedMesh || procedural) o.geometry && o.geometry.dispose && o.isMesh && !o.isInstancedMesh && o.geometry.dispose(); } });
   }
-  return { group, update, dispose, portal };
+  function openPortal() {
+    if (!portal) return;
+    portal.visible = true; portal.scale.setScalar(0.01); portal.userData.openT = 0;
+    for (const l of L.lights) if (l.kind === 'portal') l.off = false;
+    sortT = 0;
+  }
+  return { group, update, dispose, portal, openPortal };
 }
 
 export function glowTexture(inner, outer) {
