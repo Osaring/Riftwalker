@@ -1,4 +1,4 @@
 {
-  "version": 14,
-  "notes": "Commandes corrigées, pause et sac sécurisés, mini-carte, fin de salle au choix et sauvegardes renforcées."
+  "version": 15,
+  "notes": "Combat plus lisible : impacts, ennemis distincts, attaques de boss annoncées et fenêtres de riposte. Déplacements conservés."
 }

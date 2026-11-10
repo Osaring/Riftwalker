@@ -38,7 +38,10 @@ addEventListener("resize", resize);
 resize();
 let audioCtx = null,
   soundOn = true,
-  lastImpact = 0;
+  lastImpact = -Infinity;
+let impactParticles = [],
+  heroFlash = 0,
+  aimAngle = 0;
 function unlockAudio() {
   if (!soundOn) return;
   try {
@@ -188,6 +191,13 @@ function readSave() {
           finite(e.max, 1, 1e9) &&
           finite(e.spd, 0, 1000) &&
           finite(e.r, 1, 100) &&
+          (e.recover === undefined || finite(e.recover, 0, 5)) &&
+          (e.windMax === undefined || finite(e.windMax, 0.1, 5)) &&
+          (e.shotAngle === undefined ||
+            finite(e.shotAngle, -Math.PI * 2, Math.PI * 2)) &&
+          ["pattern", "nextPattern"].every(
+            (k) => e[k] === undefined || ["slam", "volley"].includes(e[k]),
+          ) &&
           ["cool", "wind", "hit", "phase", "aimX", "aimY"].every((k) =>
             finite(e[k], -1e6, 1e6),
           ),
@@ -273,7 +283,15 @@ function resumeGame() {
     if (best) hero.equipped.weapon = best.id;
   }
   syncEquipment();
-  enemies = data.enemies;
+  enemies = data.enemies.map((e) => ({
+    ...e,
+    recover: e.recover || 0,
+    pattern: e.pattern || "slam",
+    nextPattern: e.nextPattern || "slam",
+    windMax: e.windMax || (e.boss ? 1.15 : e.type === "archer" ? 0.7 : 0.85),
+    shotAngle: e.shotAngle || 0,
+    enraged: !!e.enraged,
+  }));
   loot = data.loot;
   resetSession();
   hazards = data.hazards || [];
@@ -337,6 +355,8 @@ let combo = 0,
   skillMax = 4,
   dodgeMax = 2.5;
 function spawn() {
+  impactParticles = [];
+  heroFlash = 0;
   enemies = [];
   loot = [];
   hazards = [];
@@ -389,6 +409,100 @@ function toast(s) {
   el.textContent = s;
   notice = performance.now() + 1900;
 }
+// Visual feedback never pauses the simulation or changes joystick speed.
+function impact(x, y, color, strong = false) {
+  for (let i = 0; i < (strong ? 14 : 7); i++) {
+    const angle = R(0, Math.PI * 2),
+      speed = R(45, strong ? 190 : 115);
+    impactParticles.push({
+      x,
+      y,
+      vx: Math.cos(angle) * speed,
+      vy: Math.sin(angle) * speed,
+      life: 0.32,
+      max: 0.32,
+      color,
+    });
+  }
+  impactParticles = impactParticles.slice(-160);
+  if (t - lastImpact > 0.06) {
+    tone(strong ? 210 : 410, 80, strong ? 0.16 : 0.09, "triangle", 0.055);
+    lastImpact = t;
+  }
+}
+function hurtHero(damage, protection = 0.35) {
+  if (invuln > 0 || hero.hp <= 0) return false;
+  const actual = damage * (1 - (hero.defense || 0));
+  hero.hp -= actual;
+  invuln = protection;
+  heroFlash = 0.22;
+  sfx("hit");
+  sparks.push({
+    x: hero.x,
+    y: hero.y,
+    text: "-" + Math.round(actual),
+    life: 0.6,
+    color: "#ff8199",
+  });
+  return true;
+}
+function beginWind(e) {
+  e.aimX = hero.x;
+  e.aimY = hero.y;
+  if (e.boss) {
+    e.pattern = e.nextPattern || "slam";
+    e.nextPattern = e.pattern === "slam" ? "volley" : "slam";
+    e.enraged = e.hp <= e.max * 0.5;
+    e.windMax = e.pattern === "slam" ? 1.15 : 1.3;
+    e.shotAngle = Math.atan2(hero.y - e.y, hero.x - e.x);
+    toast(
+      e.pattern === "slam"
+        ? "BOSS · Sors du cercle !"
+        : "BOSS · Évite les rayons !",
+    );
+  } else e.windMax = e.type === "archer" ? 0.7 : 0.85;
+  e.wind = e.windMax;
+}
+function resolveWind(e) {
+  if (e.type === "archer") {
+    const len = Math.hypot(e.aimX - e.x, e.aimY - e.y) || 1;
+    bolts.push({
+      x: e.x,
+      y: e.y,
+      vx: ((e.aimX - e.x) / len) * 225,
+      vy: ((e.aimY - e.y) / len) * 225,
+      life: 2.8,
+      r: 9,
+      color: "#8ce3bc",
+      damage: 19,
+    });
+  } else if (e.boss && e.pattern === "volley") {
+    const count = e.enraged ? 8 : 6;
+    for (let k = 0; k < count; k++) {
+      const a = e.shotAngle + (k * Math.PI * 2) / count;
+      bolts.push({
+        x: e.x,
+        y: e.y,
+        vx: Math.cos(a) * 175,
+        vy: Math.sin(a) * 175,
+        life: 3,
+        r: 10,
+        color: "#fda96c",
+        damage: 18,
+      });
+    }
+  } else
+    hazards.push({
+      x: e.aimX,
+      y: e.aimY,
+      r: e.boss ? 105 : 65,
+      life: 0.38,
+      damage: e.boss ? 37 : 23,
+      done: false,
+    });
+  e.recover = e.boss ? 1.1 : 0.35;
+  e.cool = e.boss ? (e.enraged ? 2.3 : 2.8) : e.type === "archer" ? 2.2 : 2.4;
+}
 function hit(dmg, range, special) {
   let targets = enemies.filter(
     (e) => e.hp > 0 && Math.hypot(e.x - hero.x, e.y - hero.y) < range,
@@ -398,9 +512,27 @@ function hit(dmg, range, special) {
       Math.hypot(a.x - hero.x, a.y - hero.y) -
       Math.hypot(b.x - hero.x, b.y - hero.y),
   );
+  if (targets.length) {
+    hero.dir = targets[0].x < hero.x ? -1 : 1;
+    aimAngle = Math.atan2(targets[0].y - hero.y, targets[0].x - hero.x);
+  } else {
+    const input = movementInput();
+    aimAngle =
+      Math.hypot(input.x, input.y) > 0.08
+        ? Math.atan2(input.y / WORLD_Y_SCALE, input.x)
+        : hero.dir === 1
+          ? 0
+          : Math.PI;
+  }
   for (let e of targets.slice(0, special ? 12 : 1)) {
     e.hp -= dmg;
     e.hit = 0.2;
+    impact(
+      e.x,
+      e.y,
+      special ? "#8fe5ff" : combo === 3 ? "#ffd17c" : "#ffe1a1",
+      special || combo === 3,
+    );
     sparks.push({
       x: e.x,
       y: e.y,
@@ -408,12 +540,20 @@ function hit(dmg, range, special) {
       life: 0.65,
       color: special ? "#8fe5ff" : "#ffe1a1",
     });
-    if (special) {
+    if (!e.boss) {
       let dx = e.x - hero.x,
         dy = e.y - hero.y,
         len = Math.hypot(dx, dy) || 1;
-      e.x = clamp(e.x + (dx / len) * 35, -440, 440);
-      e.y = clamp(e.y + (dy / len) * 35, -350, 350);
+      e.x = clamp(
+        e.x + (dx / len) * (special ? 35 : combo === 3 ? 16 : 6),
+        -440,
+        440,
+      );
+      e.y = clamp(
+        e.y + (dy / len) * (special ? 35 : combo === 3 ? 16 : 6),
+        -350,
+        350,
+      );
     }
   }
 }
@@ -436,6 +576,7 @@ function attack() {
     max: 0.3,
     r: range,
     combo,
+    angle: aimAngle,
     dir: hero.dir,
     color:
       hero.cls === "Mage" ? "#83dfff" : combo === 3 ? "#ffd17c" : "#fff2bd",
@@ -649,6 +790,8 @@ function clearInput() {
   keys = {};
 }
 function resetSession() {
+  impactParticles = [];
+  heroFlash = 0;
   clearInput();
   paused = bagOpen = false;
   document.getElementById("inventory").style.display = "none";
@@ -803,6 +946,13 @@ function update(dt) {
     saveGame();
   }
   t += dt;
+  heroFlash = Math.max(0, heroFlash - dt);
+  impactParticles = impactParticles.filter((p) => {
+    p.life -= dt;
+    p.x += p.vx * dt;
+    p.y += p.vy * dt;
+    return p.life > 0;
+  });
   invuln = Math.max(0, invuln - dt);
   comboWindow = Math.max(0, comboWindow - dt);
   slashes = slashes.filter((s) => (s.life -= dt) > 0);
@@ -829,46 +979,11 @@ function update(dt) {
     e.hit = Math.max(0, e.hit - dt);
     if (e.wind > 0) {
       e.wind -= dt;
-      if (e.wind <= 0) {
-        if (e.type === "archer") {
-          let len = Math.hypot(e.aimX - e.x, e.aimY - e.y) || 1;
-          bolts.push({
-            x: e.x,
-            y: e.y,
-            vx: ((e.aimX - e.x) / len) * 225,
-            vy: ((e.aimY - e.y) / len) * 225,
-            life: 2.8,
-            r: 9,
-            color: "#e8a4f8",
-            damage: 19,
-          });
-        } else {
-          hazards.push({
-            x: e.aimX,
-            y: e.aimY,
-            r: e.boss ? 105 : 65,
-            life: 0.38,
-            damage: e.boss ? 37 : 23,
-            done: false,
-          });
-          if (e.boss) {
-            for (let k = 0; k < 6; k++) {
-              let a = (k * Math.PI) / 3 + t;
-              bolts.push({
-                x: e.x,
-                y: e.y,
-                vx: Math.cos(a) * 160,
-                vy: Math.sin(a) * 160,
-                life: 3,
-                r: 10,
-                color: "#fda96c",
-                damage: 18,
-              });
-            }
-          }
-        }
-        e.cool = e.boss ? 2.6 : e.type === "archer" ? 2.2 : 2.4;
-      }
+      if (e.wind <= 0) resolveWind(e);
+      continue;
+    }
+    if (e.recover > 0) {
+      e.recover = Math.max(0, e.recover - dt);
       continue;
     }
     if (e.type === "archer") {
@@ -880,9 +995,7 @@ function update(dt) {
         e.y += ((hero.y - e.y) / d) * e.spd * dt;
       }
       if (e.cool <= 0) {
-        e.wind = 0.6;
-        e.aimX = hero.x;
-        e.aimY = hero.y;
+        beginWind(e);
       }
     } else if (e.boss || e.type === "brute") {
       if (d > (e.boss ? 90 : 55)) {
@@ -890,16 +1003,14 @@ function update(dt) {
         e.y += ((hero.y - e.y) / d) * e.spd * dt;
       }
       if (e.cool <= 0 && d < (e.boss ? 290 : 130)) {
-        e.wind = e.boss ? 1.1 : 0.85;
-        e.aimX = hero.x;
-        e.aimY = hero.y;
+        beginWind(e);
       }
     } else {
       if (d > e.r + 23) {
         e.x += ((hero.x - e.x) / d) * e.spd * dt;
         e.y += ((hero.y - e.y) / d) * e.spd * dt;
       } else if (invuln <= 0 && e.hit <= 0) {
-        hero.hp -= dt * 16 * (1 - (hero.defense || 0));
+        if (e.cool <= 0 && hurtHero(12, 0.4)) e.cool = 0.75;
       }
     }
     e.x = clamp(e.x, -440, 440);
@@ -910,17 +1021,8 @@ function update(dt) {
     b.y += b.vy * dt;
     b.life -= dt;
     if (invuln <= 0 && Math.hypot(b.x - hero.x, b.y - hero.y) < b.r + 17) {
-      hero.hp -= b.damage * (1 - (hero.defense || 0));
-      sfx("hit");
-      invuln = 0.35;
+      hurtHero(b.damage, 0.35);
       b.life = 0;
-      sparks.push({
-        x: hero.x,
-        y: hero.y,
-        text: "-" + b.damage,
-        life: 0.6,
-        color: "#ff8199",
-      });
     }
   }
   bolts = bolts.filter((b) => b.life > 0);
@@ -929,16 +1031,7 @@ function update(dt) {
     if (!h.done && h.life < 0.25) {
       h.done = true;
       if (invuln <= 0 && Math.hypot(h.x - hero.x, h.y - hero.y) < h.r) {
-        hero.hp -= h.damage * (1 - (hero.defense || 0));
-        sfx("hit");
-        invuln = 0.4;
-        sparks.push({
-          x: hero.x,
-          y: hero.y,
-          text: "-" + h.damage,
-          life: 0.6,
-          color: "#ff8199",
-        });
+        hurtHero(h.damage, 0.4);
       }
     }
   }
@@ -1047,34 +1140,54 @@ function draw() {
     diamond(x, y, 13, 17, i % 3 ? "#467c78" : "#775a91");
     g.shadowBlur = 0;
   }
-  function figure(x, y, r, color, health, shadow) {
-    g.fillStyle = "#03091488";
-    g.beginPath();
-    g.ellipse(x, y + 8, r * 1.3, r * 0.6, 0, 0, 7);
-    g.fill();
-    g.fillStyle = color;
-    g.beginPath();
-    g.arc(x, y - r * 0.45, r, 0, 7);
-    g.fill();
-    g.fillStyle = "#f4e5c8";
-    g.beginPath();
-    g.arc(x, y - r * 1.25, r * 0.48, 0, 7);
-    g.fill();
-    if (health < 1) {
-      g.fillStyle = "#250d1c";
-      g.fillRect(x - r, y - r * 2.4, r * 2, 5);
-      g.fillStyle = "#df6674";
-      g.fillRect(x - r, y - r * 2.4, r * 2 * health, 5);
+  for (const e of enemies.filter((e) => e.wind > 0)) {
+    const duration =
+        e.windMax || (e.boss ? 1.15 : e.type === "archer" ? 0.7 : 0.85),
+      progress = clamp(1 - e.wind / duration, 0, 1);
+    g.save();
+    g.strokeStyle = e.boss
+      ? "#ffb35c"
+      : e.type === "archer"
+        ? "#8ce3bc"
+        : "#ffc184";
+    g.lineWidth = 3;
+    if (e.boss && e.pattern === "volley") {
+      const count = e.enraged ? 8 : 6;
+      g.setLineDash([10, 8]);
+      for (let k = 0; k < count; k++) {
+        const a = e.shotAngle + (k * Math.PI * 2) / count;
+        g.beginPath();
+        g.moveTo(e.x, e.y);
+        g.lineTo(e.x + Math.cos(a) * 520, e.y + Math.sin(a) * 520);
+        g.stroke();
+      }
+      g.setLineDash([]);
+      g.beginPath();
+      g.arc(e.x, e.y, 48, -Math.PI / 2, -Math.PI / 2 + progress * Math.PI * 2);
+      g.stroke();
+    } else if (e.type === "archer") {
+      g.setLineDash([9, 7]);
+      g.beginPath();
+      g.moveTo(e.x, e.y);
+      g.lineTo(e.aimX, e.aimY);
+      g.stroke();
+      g.setLineDash([]);
+      g.beginPath();
+      g.arc(e.aimX, e.aimY, 18, 0, Math.PI * 2);
+      g.stroke();
+    } else {
+      const radius = e.boss ? 105 : 65;
+      g.fillStyle = "#ff9a6b22";
+      g.beginPath();
+      g.arc(e.aimX, e.aimY, radius, 0, Math.PI * 2);
+      g.fill();
+      g.stroke();
+      g.fillStyle = "#ff9a6b55";
+      g.beginPath();
+      g.arc(e.aimX, e.aimY, radius * progress, 0, Math.PI * 2);
+      g.fill();
     }
-  }
-  for (let e of enemies.filter((e) => e.wind > 0)) {
-    g.strokeStyle = e.boss ? "#ff9a6b" : "#e2a1ff";
-    g.lineWidth = 5;
-    g.globalAlpha = 0.4 + 0.35 * Math.sin(t * 15);
-    g.beginPath();
-    g.arc(e.aimX, e.aimY, e.boss ? 105 : e.type === "brute" ? 65 : 24, 0, 7);
-    g.stroke();
-    g.globalAlpha = 1;
+    g.restore();
   }
   for (let h of hazards) {
     g.fillStyle = "#ff8d6844";
@@ -1155,18 +1268,35 @@ function draw() {
     g.fillRect(-r * 0.29, -r * 1.83, r * 0.18, 3);
     g.fillRect(r * 0.12, -r * 1.83, r * 0.18, 3);
     g.shadowBlur = 0;
-    g.strokeStyle = kind === "hero" ? "#f5d49c" : "#eeb1aa";
-    g.lineWidth = kind === "boss" ? 7 : 4;
-    g.beginPath();
-    g.moveTo(r * 0.8, -r * 1.1);
-    g.lineTo(r * 1.25, -r * 2.3);
-    g.stroke();
-    g.fillStyle = "#f9f0d5";
-    g.beginPath();
-    g.moveTo(r * 1.25, -r * 2.3);
-    g.lineTo(r * 1.1, -r * 2.7);
-    g.lineTo(r * 1.4, -r * 2.35);
-    g.fill();
+    g.strokeStyle = kind === "archer" ? "#a1f0c5" : "#f5d49c";
+    g.lineWidth = 4;
+    if (kind === "archer") {
+      g.beginPath();
+      g.arc(r * 0.7, -r * 1.35, r * 0.85, -Math.PI / 2, Math.PI / 2);
+      g.stroke();
+      g.lineWidth = 1.5;
+      g.beginPath();
+      g.moveTo(r * 0.7, -r * 2.2);
+      g.lineTo(r * 0.7, -r * 0.5);
+      g.stroke();
+    } else if (kind === "brute" || kind === "boss") {
+      g.beginPath();
+      g.moveTo(r * 0.8, 0);
+      g.lineTo(r * 0.8, -r * 2.3);
+      g.stroke();
+      g.fillStyle = "#b6a79b";
+      g.fillRect(r * 0.25, -r * 2.5, r * 1.2, r * 0.65);
+      g.fillStyle = body;
+      g.fillRect(-r * 1.15, -r * 1.6, r * 0.6, r * 0.7);
+      g.fillRect(r * 0.55, -r * 1.6, r * 0.6, r * 0.7);
+    } else {
+      for (const side of kind === "stalker" ? [-1, 1] : [1]) {
+        g.beginPath();
+        g.moveTo(side * r * 0.8, -r * 0.7);
+        g.lineTo(side * r * 1.3, -r * 2);
+        g.stroke();
+      }
+    }
     if (kind === "boss") {
       g.strokeStyle = "#ff835c";
       g.lineWidth = 4;
@@ -1177,16 +1307,31 @@ function draw() {
     g.restore();
   }
   for (let e of enemies) {
-    let col = e.hit > 0 ? "#fff2cc" : e.boss ? "#9f5d55" : "#7d506d";
+    let col =
+      e.hit > 0
+        ? "#fff2cc"
+        : e.boss
+          ? "#b76548"
+          : e.type === "archer"
+            ? "#4eaa83"
+            : e.type === "brute"
+              ? "#b48c5c"
+              : "#9b6bcd";
     warrior(
       e.x,
       e.y,
       e.r,
       col,
       e.boss ? "#4b2036" : "#41293f",
-      e.boss ? "boss" : "enemy",
+      e.type,
       e.phase,
     );
+    if (e.boss && e.recover > 0) {
+      g.fillStyle = "#a5f4c0";
+      g.font = "bold 18px system-ui";
+      g.textAlign = "center";
+      g.fillText("ATTAQUE !", e.x, e.y - e.r * 3.6);
+    }
     if (e.hp < e.max) {
       g.fillStyle = "#210d20";
       g.fillRect(e.x - e.r, e.y - e.r * 3.1, e.r * 2, 5);
@@ -1204,7 +1349,7 @@ function draw() {
     hero.x,
     hero.y,
     25,
-    color,
+    heroFlash > 0 ? "#fff2dc" : color,
     hero.cls === "Mage"
       ? "#1b446a"
       : hero.cls === "Assassin"
@@ -1213,6 +1358,19 @@ function draw() {
     "hero",
     0,
   );
+  if (invuln > 0) {
+    g.strokeStyle = "#a0e8ff";
+    g.lineWidth = 3;
+    g.beginPath();
+    g.ellipse(hero.x, hero.y + 8, 32, 20, 0, 0, Math.PI * 2);
+    g.stroke();
+  }
+  for (const p of impactParticles) {
+    g.globalAlpha = p.life / p.max;
+    g.fillStyle = p.color;
+    g.fillRect(p.x - 2, p.y - 18, 4, 7);
+  }
+  g.globalAlpha = 1;
   for (let s of slashes) {
     g.strokeStyle = s.color;
     g.shadowColor = s.color;
@@ -1227,8 +1385,8 @@ function draw() {
         s.x,
         s.y - 10,
         s.r * 0.8,
-        s.dir === 1 ? -0.9 : 2.1,
-        s.dir === 1 ? 1.2 : 4.2,
+        (s.angle ?? (s.dir === 1 ? 0 : Math.PI)) - 0.95,
+        (s.angle ?? (s.dir === 1 ? 0 : Math.PI)) + 1.15,
       );
     g.stroke();
     g.shadowBlur = 0;
@@ -1269,7 +1427,7 @@ document.addEventListener("visibilitychange", () => {
   if (document.hidden) setPaused(true);
 });
 window.addEventListener("pagehide", saveGame);
-const ECLIPSE_VERSION = 14;
+const ECLIPSE_VERSION = 15;
 let availableVersion = ECLIPSE_VERSION;
 async function checkForUpdate(manual = false) {
   const btn = document.getElementById("checkUpdate");

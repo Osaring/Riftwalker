@@ -196,5 +196,107 @@ module.exports = function verifyGame() {
     Math.abs(hero.x - 285) < 1e-8,
   );
   draw = originalDraw;
+  start("Guerrier");
+  clearInput();
+  room = 5;
+  spawn();
+  const boss = enemies[0];
+  boss.x = 0;
+  boss.y = -120;
+  hero.x = 0;
+  hero.y = 0;
+  beginWind(boss);
+  const locked = { x: boss.aimX, y: boss.aimY };
+  hero.x = 200;
+  update(0.2);
+  check(
+    "boss slam locks target during warning",
+    boss.aimX === locked.x && boss.aimY === locked.y && hazards.length === 0,
+  );
+  for (let i = 0; i < 60; i++) update(1 / 60);
+  check(
+    "slam creates one marked hazard, no surprise volley",
+    hazards.length === 1 && bolts.length === 0 && boss.recover > 0,
+  );
+  const bx = boss.x,
+    by = boss.y;
+  update(0.1);
+  check(
+    "boss recovery leaves an opening",
+    boss.x === bx && boss.y === by && boss.recover > 0,
+  );
+  hazards = [];
+  beginWind(boss);
+  check("boss alternates slam and volley", boss.pattern === "volley");
+  const angle = boss.shotAngle;
+  hero.x = -200;
+  resolveWind(boss);
+  check(
+    "volley follows the announced rays",
+    bolts.length === 6 &&
+      Math.abs(Math.atan2(bolts[0].vy, bolts[0].vx) - angle) < 1e-8,
+  );
+  bolts = [];
+  boss.hp = boss.max * 0.4;
+  beginWind(boss);
+  resolveWind(boss);
+  beginWind(boss);
+  resolveWind(boss);
+  check(
+    "second boss phase adds two announced rays",
+    boss.enraged && bolts.length === 8,
+  );
+  saveGame();
+  resumeGame();
+  check(
+    "boss pattern and recovery survive save",
+    enemies[0].pattern === "volley" && enemies[0].recover > 0 && !!readSave(),
+  );
+  hero.hp = 100;
+  hero.defense = 0.5;
+  invuln = 0;
+  hurtHero(20);
+  check(
+    "damage feedback uses armor-adjusted damage",
+    hero.hp === 90 && sparks.at(-1).text === "-10" && heroFlash > 0,
+  );
+  hurtHero(20);
+  check("invulnerability prevents stacked damage", hero.hp === 90);
+  start("Guerrier");
+  clearInput();
+  const target = enemies[0];
+  enemies = [target];
+  target.x = 0;
+  target.y = -55;
+  target.hp = target.max = 500;
+  target.boss = false;
+  target.type = "brute";
+  impactParticles = [];
+  attack();
+  check(
+    "attack arc points to its target",
+    Math.abs(slashes.at(-1).angle + Math.PI / 2) < 1e-8,
+  );
+  check(
+    "successful hit produces recoil and particles",
+    target.y < -55 && impactParticles.length > 0,
+  );
+  enemies = [];
+  impactParticles = [];
+  atk = 0;
+  attack();
+  check(
+    "missed attack creates no impact particles",
+    impactParticles.length === 0,
+  );
+  for (let i = 0; i < 50; i++) impact(0, 0, "#fff", true);
+  check("impact effects remain bounded", impactParticles.length <= 160);
+  const pxBefore = hero.x;
+  jo = { x: 1, y: 0 };
+  update(0.1);
+  check(
+    "impact effects do not slow movement",
+    Math.abs(hero.x - pxBefore - 28.5) < 1e-8,
+  );
   return results;
 };
