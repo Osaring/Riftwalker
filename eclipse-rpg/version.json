@@ -1,1 +1,4 @@
-{"version":13,"notes":"Déplacements 54 % plus rapides, joystick plus réactif et esquive plus longue."}
+{
+  "version": 14,
+  "notes": "Commandes corrigées, pause et sac sécurisés, mini-carte, fin de salle au choix et sauvegardes renforcées."
+}
