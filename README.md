@@ -20,6 +20,12 @@ L'ancienne version (v1) est conservée dans la branche `ancienne-version`.
 ## Crédits
 - Personnages, tenues, animations, décors : Quaternius — Universal Base Characters, Modular Character Outfits Fantasy, Universal Animation Library 1 & 2, Modular Dungeon, Stylized Nature MegaKit, Fantasy Props MegaKit (CC0)
 - Objets : Kay Lousberg — KayKit (CC0)
+- Bruitages : Kenney — Impact Sounds, RPG Audio, Interface Sounds (CC0) ; OpenGameArt — RPG Sound Pack et Zombies Sound Pack (artisticdude), Battle Sound Effects (Ogrebane) (CC0)
+- Musiques (licence standard filmmusic.io avec attribution, https://filmmusic.io/standard-license) :
+  - « Drums of the Deep » — Kevin MacLeod (incompetech.com), https://filmmusic.io/song/3681-drums-of-the-deep
+  - « The Cold Battle » — Alexander Nakarada, https://filmmusic.io/song/7515-the-cold-battle
+  - « Horsemen Approach » (feat. Kevin MacLeod) — Alexander Nakarada, https://filmmusic.io/song/7934-horsemen-approach
+- Textures de pierre : générées par calcul (tools/gen_textures.py)
 - Icônes : game-icons.net — Lorc, Delapouite, Felbrigg (CC BY 3.0)
 - Moteur 3D : Three.js (licence MIT)
 - Police : Nunito (SIL Open Font License)

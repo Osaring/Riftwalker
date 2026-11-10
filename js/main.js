@@ -15,7 +15,7 @@ import { input, setupInput, consume } from './input.js';
 import * as UI from './ui.js';
 import { R, clamp, lerp, damp, angWrap, angDiff, store, $ } from './util.js';
 
-export const APP_VERSION = '5.0.0';
+export const APP_VERSION = '5.1.0';
 
 // ---------------------------------------------------------------
 // MOTEUR 3D
