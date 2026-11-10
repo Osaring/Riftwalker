@@ -47,17 +47,31 @@ canvas.ico { width: 100%; height: 100%; display: block; pointer-events: none; }
 @keyframes lootIn { from { opacity: 0; transform: translateX(-12px); } }
 @keyframes lootOut { to { opacity: 0; transform: translateY(-6px); } }
 
-#actions { position: absolute; right: calc(10px + var(--sar)); bottom: calc(12px + var(--sab)); width: 240px; height: 210px; pointer-events: none; }
+#actions { position: absolute; right: calc(10px + var(--sar)); bottom: calc(12px + var(--sab)); width: 262px; height: 244px; pointer-events: none; }
 .act { position: absolute; pointer-events: auto; touch-action: none; width: 60px; height: 60px; border-radius: 50%; padding: 9px;
   background: radial-gradient(circle at 50% 30%, rgba(60,46,96,.92), rgba(14,10,26,.94)); box-shadow: 0 0 0 2px var(--line), 0 3px 10px rgba(0,0,0,.6); transition: transform .07s; overflow: hidden; }
 .act.pressed { transform: scale(.9); }
 .act.big { width: 88px; height: 88px; right: 0; bottom: 0; padding: 14px; box-shadow: 0 0 0 2.5px var(--gold), 0 0 16px rgba(232,196,122,.25), 0 3px 12px rgba(0,0,0,.6); }
-/* disposition « Wild Rift » : les compétences en arc de cercle autour du gros bouton d'attaque */
-#btnSkill1 { right: 106px; bottom: 6px; }
-#btnSkill2 { right: 86px; bottom: 80px; }
-#btnSkill3 { right: 18px; bottom: 104px; }
-#btnRoll { right: 176px; bottom: 6px; box-shadow: 0 0 0 2px rgba(140,255,180,.45), 0 3px 10px rgba(0,0,0,.6); }
-#btnPotion { right: 158px; bottom: 76px; }
+/* disposition « Wild Rift » : les compétences en arc de cercle autour du gros bouton d'attaque,
+   l'ultime au-dessus, parade / roulade / potion sur le côté */
+#btnSkill1 { right: 114px; bottom: 14px; }
+#btnSkill2 { right: 86px; bottom: 86px; }
+#btnSkill3 { right: 14px; bottom: 114px; }
+#btnUlt { right: 93px; bottom: 171px; }
+#btnParry { right: 193px; bottom: 68px; box-shadow: 0 0 0 2px rgba(140,200,255,.5), 0 3px 10px rgba(0,0,0,.6); }
+#btnRoll { right: 196px; bottom: 0; box-shadow: 0 0 0 2px rgba(140,255,180,.45), 0 3px 10px rgba(0,0,0,.6); }
+#btnPotion { right: 171px; bottom: 156px; width: 46px; height: 46px; padding: 7px; }
+.act.ult { width: 66px; height: 66px; padding: 10px; box-shadow: 0 0 0 2.5px #ff9a3a, 0 0 18px rgba(255,140,50,.35), 0 3px 12px rgba(0,0,0,.6); }
+.act.ult.ready { box-shadow: 0 0 0 2.5px #ffc04a, 0 0 26px rgba(255,170,60,.7), 0 3px 12px rgba(0,0,0,.6); }
+.act.exec { box-shadow: 0 0 0 3px #ff3a2a, 0 0 22px rgba(255,40,30,.75), 0 3px 12px rgba(0,0,0,.6); animation: execPulse .6s ease-in-out infinite alternate; }
+@keyframes execPulse { from { transform: scale(1); } to { transform: scale(1.08); } }
+.act.locked { opacity: .45; }
+.act .lock:empty { display: none; }
+/* zone « annuler » : apparaît pendant qu'on vise ; y relâcher le doigt annule la compétence */
+#aimCancel { position: absolute; right: 8px; bottom: 236px; width: 54px; height: 54px; border-radius: 50%; display: none; place-items: center; font-size: 24px; font-weight: 900; color: #fff;
+  background: rgba(120,20,20,.55); border: 2px solid rgba(255,120,110,.7); pointer-events: auto; }
+#aimCancel.on { display: grid; }
+#aimCancel.hot { background: rgba(220,40,30,.85); transform: scale(1.15); }
 .act.small { width: 50px; height: 50px; padding: 8px; }
 .act .cd { position: absolute; inset: 0; border-radius: 50%; display: grid; place-items: center; font-size: 15px; font-weight: 900; color: #fff; text-shadow: 0 1px 3px #000; pointer-events: none; }
 .act .cost, .act .count, .act .lock { position: absolute; bottom: 2px; left: 0; right: 0; text-align: center; font-style: normal; font-size: 10px; font-weight: 900; color: #ffb0a0; text-shadow: 0 1px 2px #000; pointer-events: none; }
@@ -167,3 +181,22 @@ h2.red { color: #ff5a4a; text-shadow: 0 0 20px rgba(255,60,40,.5); }
 /* style sombre : les bords de l'écran s'assombrissent (vignettage), comme dans Diablo */
 #vignette { position: fixed; inset: 0; pointer-events: none; display: none; background: radial-gradient(ellipse at 50% 52%, transparent 48%, rgba(0,0,0,.38) 75%, rgba(0,0,0,.75) 100%); }
 body.dark #vignette { display: block; } /* toujours actif */
+
+/* écran des compétences : spécialisations, rangs, talents */
+#skillList .span { grid-column: 1 / -1; }
+#skillList h3 { margin: 10px 2px 0; font-size: 13px; color: var(--gold); text-transform: uppercase; letter-spacing: .08em; }
+.skill.spec { cursor: pointer; }
+.skill.spec.on { box-shadow: inset 0 0 0 2px var(--gold), 0 0 14px rgba(232,196,122,.25); }
+.trow { display: grid; grid-template-columns: 52px repeat(3, 1fr); gap: 6px; align-items: stretch; }
+.trow .tlv { display: grid; place-items: center; font-size: 11px; font-weight: 900; color: var(--gold); background: rgba(10,8,20,.6); border-radius: 10px; }
+.trow.locked { opacity: .45; }
+.tal { padding: 8px; border-radius: 12px; background: rgba(10,8,20,.75); box-shadow: inset 0 0 0 1px rgba(255,255,255,.1); font-size: 11px; color: var(--dim); text-align: left; cursor: pointer; }
+.tal .ic { width: 30px; height: 30px; float: left; margin: 0 6px 2px 0; }
+.tal b { display: block; color: var(--txt); font-size: 12px; }
+.tal.on { box-shadow: inset 0 0 0 2px #7affb0, 0 0 12px rgba(120,255,170,.25); }
+/* infobulle : pouvoir légendaire et ensembles */
+#tooltip .pow { margin-top: 6px; color: #ff9a2a; font-size: 12px; font-weight: 700; }
+#tooltip .set { margin-top: 6px; font-size: 11px; color: #8a8a8a; display: grid; gap: 2px; }
+#tooltip .set b { color: #ffd24a; }
+#tooltip .set .g { color: #1eff00; }
+@media (max-aspect-ratio: 1/1) { .trow { grid-template-columns: 1fr; } .trow .tlv { padding: 4px; } }

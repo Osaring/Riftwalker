@@ -51,10 +51,14 @@ function hiss(d, { vol = 0.2, f = 1000, q = 0.8, type = 'bandpass', delay = 0, s
   if (wet) { const w = ctx.createGain(); w.gain.value = wet; g.connect(w); w.connect(verb); }
   s.start(t, Math.random() * 0.5); s.stop(t + d + a + 0.05);
 }
+// voix des monstres : [fréquence de la voix, timbre du souffle]
+const VOICE = { ghoul: [85, 280], skeleton: [140, 900], cultist: [120, 600], brute: [55, 200], boss: [48, 180], berserker: [75, 320], thrower: [150, 1100], necro: [100, 700], bomber: [220, 1600], minion: [180, 1300] };
 export const SFX = {
   swing: (k = 1) => hiss(0.16, { vol: 0.16, f: 900 * k, sweep: 2600 * k, q: 1.4, wet: 0.1 }),
   heavy: () => { hiss(0.32, { vol: 0.22, f: 400, sweep: 1600, q: 1 }); tone(90, 0.3, { vol: 0.12, slide: -40 }); },
-  hit: () => { tone(110, 0.14, { vol: 0.35, slide: -60, wet: 0.1 }); hiss(0.09, { vol: 0.25, f: 1400, q: 0.7 }); hiss(0.05, { vol: 0.12, f: 4200, type: 'highpass' }); },
+  // impact : un « boum » grave (le corps), un craquement (la chair) et un éclat métallique (la lame)
+  hit: () => { tone(95, 0.16, { vol: 0.42, slide: -55, wet: 0.08 }); hiss(0.1, { vol: 0.3, f: 900, q: 0.6 }); hiss(0.05, { vol: 0.14, f: 4200, type: 'highpass' }); tone(55, 0.12, { vol: 0.25, slide: -15, wet: 0 }); },
+  heavyHit: () => { tone(70, 0.3, { vol: 0.55, slide: -35, wet: 0.2 }); hiss(0.2, { vol: 0.35, f: 500, q: 0.6, type: 'lowpass' }); hiss(0.08, { vol: 0.2, f: 2600, q: 0.8 }); tone(46, 0.35, { vol: 0.3, slide: -10, wet: 0.3 }); },
   crit: () => { tone(80, 0.22, { vol: 0.45, slide: -40 }); hiss(0.14, { vol: 0.32, f: 1100 }); tone(1800, 0.12, { type: 'triangle', vol: 0.06, slide: -900 }); },
   block: () => { tone(420, 0.16, { type: 'triangle', vol: 0.12, slide: -120 }); tone(1260, 0.1, { type: 'triangle', vol: 0.05 }); hiss(0.06, { vol: 0.15, f: 3000 }); },
   hurt: () => { tone(160, 0.2, { type: 'triangle', vol: 0.18, slide: -80 }); hiss(0.12, { vol: 0.18, f: 600, type: 'lowpass' }); },
@@ -64,8 +68,17 @@ export const SFX = {
   whirl: () => { hiss(0.5, { vol: 0.2, f: 700, sweep: 1500, q: 2 }); hiss(0.5, { vol: 0.12, f: 1400, sweep: -900, q: 2, delay: 0.15 }); },
   shout: () => { tone(110, 0.5, { type: 'sawtooth', vol: 0.06, slide: 30 }); tone(165, 0.5, { type: 'sawtooth', vol: 0.04, slide: 40 }); hiss(0.45, { vol: 0.08, f: 500, q: 0.5 }); },
   slam: () => { tone(55, 0.6, { vol: 0.5, slide: -25, wet: 0.4 }); hiss(0.5, { vol: 0.3, f: 220, type: 'lowpass', wet: 0.4 }); },
-  enemyDie: () => { hiss(0.35, { vol: 0.14, f: 300, type: 'lowpass' }); tone(140, 0.35, { type: 'triangle', vol: 0.08, slide: -90 }); },
-  growl: () => { tone(85, 0.6, { type: 'sawtooth', vol: 0.05, slide: -20, a: 0.08 }); hiss(0.5, { vol: 0.07, f: 280, q: 3, a: 0.08 }); },
+  // cris des monstres : chaque type a sa « voix » (grave pour la brute, aiguë pour le possédé…)
+  enemyDie: (type) => { const v = VOICE[type] || VOICE.ghoul; hiss(0.4, { vol: 0.14, f: 300, type: 'lowpass' }); tone(v[0] * 1.3, 0.45, { type: 'sawtooth', vol: 0.05, slide: -v[0] * 0.7, a: 0.02 }); hiss(0.35, { vol: 0.06, f: v[1], q: 4, sweep: -v[1] * 0.5 }); },
+  growl: (type) => { const v = VOICE[type] || VOICE.ghoul; tone(v[0], 0.6, { type: 'sawtooth', vol: 0.05, slide: -v[0] * 0.25, a: 0.08 }); tone(v[0] * 1.5, 0.5, { type: 'sawtooth', vol: 0.025, slide: -v[0] * 0.3, a: 0.1 }); hiss(0.5, { vol: 0.07, f: v[1], q: 3, a: 0.08 }); },
+  roar: () => { [55, 82, 110].forEach((f, i) => tone(f, 1.4, { type: 'sawtooth', vol: 0.07, slide: -f * 0.3, a: 0.15, wet: 0.6, delay: i * 0.05 })); hiss(1.2, { vol: 0.12, f: 300, q: 2, a: 0.15, sweep: -150, wet: 0.5 }); },
+  parry: () => { tone(1320, 0.4, { type: 'triangle', vol: 0.12, slide: -200, wet: 0.5 }); tone(1980, 0.3, { type: 'triangle', vol: 0.06, wet: 0.5 }); tone(660, 0.25, { type: 'triangle', vol: 0.1, slide: -100 }); hiss(0.12, { vol: 0.25, f: 4000, q: 0.8 }); },
+  execute: () => { tone(48, 0.6, { vol: 0.6, slide: -20, wet: 0.4 }); hiss(0.4, { vol: 0.35, f: 400, type: 'lowpass', wet: 0.4 }); hiss(0.15, { vol: 0.25, f: 2200, q: 0.7 }); tone(220, 0.5, { type: 'sawtooth', vol: 0.04, slide: -150, wet: 0.5 }); },
+  leap: () => { hiss(0.4, { vol: 0.16, f: 400, sweep: 1600, q: 0.7 }); tone(120, 0.3, { vol: 0.1, slide: 60 }); },
+  avatar: () => { [65, 98, 131, 196].forEach((f, i) => tone(f, 1.6, { type: 'sawtooth', vol: 0.06, slide: f * 0.15, a: 0.2, wet: 0.7, delay: i * 0.04 })); hiss(1.4, { vol: 0.1, f: 600, sweep: 2400, q: 0.8, a: 0.2, wet: 0.6 }); tone(40, 1.2, { vol: 0.4, slide: -8, wet: 0.5 }); },
+  explode: () => { tone(42, 0.9, { vol: 0.65, slide: -18, wet: 0.5 }); hiss(0.8, { vol: 0.45, f: 260, type: 'lowpass', wet: 0.5 }); hiss(0.3, { vol: 0.2, f: 2400, q: 0.5 }); },
+  fuse: () => { hiss(0.9, { vol: 0.1, f: 1800, sweep: 3200, q: 4, a: 0.1 }); tone(300, 0.9, { type: 'square', vol: 0.03, slide: 500, a: 0.1 }); },
+  summon: () => { tone(110, 1, { type: 'sawtooth', vol: 0.05, slide: -40, a: 0.1, wet: 0.7 }); hiss(0.9, { vol: 0.08, f: 900, q: 6, sweep: -600, a: 0.1, wet: 0.7 }); [523, 494, 466].forEach((f, i) => tone(f, 0.5, { vol: 0.03, delay: i * 0.1, wet: 0.8 })); },
   coin: () => { tone(1568, 0.25, { type: 'triangle', vol: 0.05, wet: 0.3 }); tone(2093, 0.3, { type: 'triangle', vol: 0.04, delay: 0.06, wet: 0.3 }); },
   loot: (r) => {
     const base = [330, 392, 440, 523, 587, 659][r];
@@ -90,15 +103,19 @@ export function musicTick() {
   if (!ctx || !settings.music || ctx.state !== 'running') return;
   if (nextT < ctx.currentTime) nextT = ctx.currentTime + 0.05;
   while (nextT < ctx.currentTime + 0.3) {
-    const t = nextT, beat = musicState === 'combat' ? 0.3 : 0.5;
+    const boss = musicState === 'boss', fight = musicState === 'combat' || boss;
+    const t = nextT, beat = boss ? 0.24 : fight ? 0.3 : 0.5;
     const bar = Math.floor(step / 16) % 4, roots = [45, 41, 43, 40];
     const root = roots[bar];
-    if (step % 16 === 0) pad(root, beat * 16, musicState === 'combat' ? 0.05 : 0.07);
+    if (step % 16 === 0) pad(boss ? root - 12 : root, beat * 16, fight ? 0.05 : 0.07);
     if (musicState === 'explore' && step % 8 === 4 && Math.random() < 0.6) bell(root + 24 + SCALE[Math.floor(Math.random() * 5)], t);
-    if (musicState === 'combat') {
+    if (fight) {
+      // combat : tambours et cordes pincées ; contre le boss, plus vite, plus grave, avec des coups de timbales
       if (step % 4 === 0) drum(t, step % 8 === 0 ? 1 : 0.6);
       if (step % 8 === 6) drum(t, 0.4);
-      if (step % 2 === 0) pluck(root + 12 + SCALE[(step / 2) % 5 | 0], t);
+      if (boss && step % 2 === 1 && Math.random() < 0.5) drum(t, 0.3);
+      if (step % 2 === 0) pluck(root + (boss ? 0 : 12) + SCALE[(step / 2) % 5 | 0], t);
+      if (boss && step % 16 === 8) bell(root + 12, t);
     }
     step++; nextT += beat / 2;
   }

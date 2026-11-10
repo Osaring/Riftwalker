@@ -3,7 +3,8 @@
 // =====================================================================
 import * as THREE from 'three';
 import { $, R } from './util.js';
-import { SLOTS, SLOT_NAME, RARITY, STAT_NAME, WEAPONS, itemScore, makeItem, rollRarity, looksOf } from './items.js';
+import { SLOTS, SLOT_NAME, RARITY, STAT_NAME, WEAPONS, itemScore, makeItem, rollRarity, looksOf, SETS, setCounts } from './items.js';
+import { SPECS, SKILLS as WSK, PASSIVES, TALENT_ROWS, SKILL_MAX, mainSkill } from './warrior.js';
 import { Character, HERO_H } from './character.js';
 import { SFX, settings, applyVolumes, unlock } from './audio.js';
 
@@ -127,11 +128,28 @@ export function updateHUD(g, P, camera) {
   setText('#lvlBadge', S.level); setText('#floorTag', `Étage ${S.floor}`);
   set('#xpBar .fill', 'transform', `scaleX(${S.xp / H.xpNeed(S.level)})`);
   setText('#btnPotion .count', S.potions);
-  cd('btnSkill1', P.cd.skill1, 9); cd('btnSkill2', P.cd.skill2, 3); cd('btnSkill3', P.cd.skill3, 25); cd('btnRoll', P.cd.roll, 0.75); cd('btnPotion', P.cd.potion, 1.2);
-  $('btnSkill2').classList.toggle('nores', P.rage < 30);
-  $('btnSkill3').classList.toggle('locked', S.skills.shout <= 0);
-  $('btnSkill3').querySelector('.lock').style.display = S.skills.shout > 0 ? 'none' : '';
-  $('btnPotion').classList.toggle('nores', S.potions <= 0);
+  if (P.avatar > 0) setText('.bar.rage span', `${Math.floor(P.rage)} rage · Avatar ${Math.ceil(P.avatar)} s`);
+  // compétence principale : change selon la spécialisation, et devient « Exécution » quand la cible est presque morte
+  const main = P.execReady ? 'execute' : mainSkill(S);
+  if (lastHud.main !== main) { lastHud.main = main; drawIcon($('btnSkill2').querySelector('canvas'), WSK[main].icon); }
+  const cost = Math.max(0, (WSK[main].rage || 0) - (st.costRed || 0));
+  setText('#btnSkill2 .cost', cost || '');
+  tog('btnSkill2', 'exec', P.execReady);
+  tog('btnSkill2', 'nores', P.rage < cost);
+  // visée au doigt : direction pour la Charge et la compétence principale, endroit pour le Bond
+  aimAttr('btnSkill1', 'dir'); aimAttr('btnSkill2', main === 'whirl' || main === 'execute' ? '' : 'cone'); aimAttr('btnSkill3', 'point');
+  // recharges (avec charges multiples pour Charge / Bond)
+  stackCd('btnSkill1', P, 'skill1', H.fullCd('skill1', 'charge'));
+  cd('btnSkill2', P.cd.skill2, WSK[main].cd);
+  stackCd('btnSkill3', P, 'skill3', H.fullCd('skill3', 'leap'));
+  cd('btnUlt', P.cd.ult, H.fullCd('ult', 'avatar')); cd('btnParry', P.cd.parry, H.fullCd('parry', 'parry'));
+  cd('btnRoll', P.cd.roll, 0.75); cd('btnPotion', P.cd.potion, 1.2);
+  // compétences pas encore débloquées
+  for (const [id, sk] of [['btnSkill3', 'leap'], ['btnParry', 'parry'], ['btnUlt', 'avatar']]) {
+    const lk = S.level < WSK[sk].lvl; tog(id, 'locked', lk); setText('#' + id + ' .lock', lk ? 'Niv. ' + WSK[sk].lvl : '');
+  }
+  tog('btnUlt', 'ready', S.level >= WSK.avatar.lvl && P.cd.ult <= 0);
+  tog('btnPotion', 'nores', S.potions <= 0);
   // surimpression (on ne l'efface que s'il y avait quelque chose dessus)
   if (ovDirty) clearOverlay();
   ovDirty = false;
@@ -154,7 +172,8 @@ export function updateHUD(g, P, camera) {
     const [x, y, ok] = proj(camera, e.x, e.y + e.T.height * 1.35 + 0.3, e.z);
     if (!ok || x < 0 || x > W || y < 0 || y > Hh) continue;
     const dd = Math.hypot(e.x - P.x, e.z - P.z); if (dd > 24) continue;
-    wrBar(x, y, e.hp / e.maxHp, e.T.boss ? '#ff8a20' : e === g.target ? '#ff3a2a' : '#d02c2c', S.floor + (e.T.boss ? 2 : 0), (e.T.boss ? 100 : 62) * k, 7 * k, e.maxHp > 200 ? 100 / e.maxHp : 0);
+    wrBar(x, y, e.hp / e.maxHp, e.T.boss ? '#ff8a20' : e.elite ? '#e0a020' : e === g.target ? '#ff3a2a' : '#d02c2c', S.floor + (e.T.boss ? 2 : e.elite ? 1 : 0), (e.T.boss ? 100 : e.elite ? 80 : 62) * k, 7 * k, e.maxHp > 200 ? 100 / e.maxHp : 0);
+    if (e.shield > 0) { c.fillStyle = 'rgba(120,190,255,.85)'; c.fillRect(x - (e.elite ? 80 : 62) * k / 2 + 9 * k, y - 3 * k, ((e.elite ? 80 : 62) * k - 9 * k) * e.shield / e.shieldMax, 2.5 * k); }
     if (e.stun > 0) { c.fillStyle = '#ffe58a'; c.font = `900 ${12 * k}px Nunito`; c.textAlign = 'center'; c.fillText('✦ ✦', x, y - 8 * k); }
   }
   if (P.hp > 0) { // la barre du héros, au-dessus de sa tête (verte, découpée tous les 100 PV)
@@ -181,7 +200,7 @@ export function updateHUD(g, P, camera) {
     ovDirty = true;
     const bw = Math.min(240 * k, W * 0.46), by = (W < Hh ? 120 : 14) * k + safeTop() * k, bx = (W - bw) / 2;
     c.fillStyle = 'rgba(10,8,20,.72)'; rr(c, bx - 8 * k, by - 4 * k, bw + 16 * k, 30 * k, 8 * k); c.fill();
-    c.font = `800 ${12 * k}px Nunito`; c.fillStyle = t.T.boss ? '#ffb05a' : '#f0e6ff'; c.fillText(t.T.boss ? '☠ ' + t.T.name : t.T.name, W / 2, by + 9 * k);
+    c.font = `800 ${12 * k}px Nunito`; c.fillStyle = t.T.boss ? '#ffb05a' : t.elite ? '#ffd24a' : '#f0e6ff'; c.fillText(t.T.boss ? '☠ ' + t.T.name + (t.phase > 1 ? ` · phase ${t.phase}` : '') : t.elite ? '★ ' + t.name + ' (élite)' : t.name, W / 2, by + 9 * k);
     c.fillStyle = 'rgba(255,255,255,.12)'; rr(c, bx, by + 14 * k, bw, 7 * k, 3.5 * k); c.fill();
     c.fillStyle = t.T.boss ? '#ff8a20' : '#e83a3a'; rr(c, bx, by + 14 * k, Math.max(7 * k, bw * t.hp / t.maxHp), 7 * k, 3.5 * k); c.fill();
   }
@@ -199,6 +218,14 @@ let _sat = null;
 function safeTop() { if (_sat === null) { const d = document.createElement('div'); d.style.cssText = 'position:fixed;top:0;height:env(safe-area-inset-top);visibility:hidden'; document.body.appendChild(d); _sat = d.offsetHeight || 0; d.remove(); } return _sat; }
 function set(sel, prop, val) { if (lastHud[sel + prop] === val) return; lastHud[sel + prop] = val; document.querySelector(sel).style[prop] = val; }
 function setText(sel, val) { val = String(val); if (lastHud[sel] === val) return; lastHud[sel] = val; document.querySelector(sel).textContent = val; }
+function tog(id, cls, on) { const k = id + '.' + cls; if (lastHud[k] === on) return; lastHud[k] = on; $(id).classList.toggle(cls, !!on); }
+function aimAttr(id, v) { if (lastHud[id + 'aim'] === v) return; lastHud[id + 'aim'] = v; $(id).dataset.aim = v; }
+function stackCd(id, P, k, full) {
+  const n = P.stk[k];
+  cd(id, n > 0 ? 0 : P.cd[k], full);
+  setText('#' + id + ' .cost', n > 1 ? '×' + n : '');
+  tog(id, 'cooling', n <= 0);
+}
 function cd(id, v, max) {
   const el = $(id).querySelector('.cd');
   const txt = v > 0.05 ? (v > 1.5 ? Math.ceil(v) : v.toFixed(1)) : '';
@@ -329,22 +356,36 @@ export function refreshHero() {
   $('bagCount').textContent = `${S.bag.length}/40`;
   const bag = $('bag'); bag.innerHTML = '';
   S.bag.forEach((it) => bag.appendChild(itemCell(it, () => tip(it, 'bag'))));
-  // compétences
-  const SK = SKILLS(S);
-  $('ptsText').textContent = S.points > 0 ? `Tu as ${S.points} point${S.points > 1 ? 's' : ''} à dépenser (1 par niveau).` : 'Gagne des niveaux pour obtenir des points de compétence.';
+  // compétences : spécialisation, compétences (rangs), talents
+  $('ptsText').textContent = S.points > 0 ? `Tu as ${S.points} point${S.points > 1 ? 's' : ''} à dépenser (1 par niveau). Les talents et la spécialisation se changent gratuitement.` : 'Gagne des niveaux pour obtenir des points. Les talents et la spécialisation se changent gratuitement.';
   const list = $('skillList'); list.innerHTML = '';
-  for (const k of Object.keys(SK)) {
-    const sk = SK[k], rank = S.skills[k];
-    const d = document.createElement('div'); d.className = 'skill';
-    d.innerHTML = `<canvas class="ic"></canvas><div class="tx"><b>${sk.name}</b><span class="rk">Rang ${rank}/${sk.max}</span><br>${sk.desc(rank)}</div><button>+</button>`;
-    drawIcon(d.querySelector('canvas'), sk.icon);
-    const btn = d.querySelector('button');
-    const lockLv = sk.lvl && S.level < sk.lvl;
-    btn.disabled = S.points <= 0 || rank >= sk.max || lockLv;
-    if (lockLv) btn.textContent = 'Niv. ' + sk.lvl;
-    btn.onclick = () => { S.points--; S.skills[k]++; SFX.equip(); H.saveGame(); H.refreshHeroLooks(); refreshHero(); };
+  const h = (t) => { const e = document.createElement('h3'); e.className = 'span'; e.textContent = t; list.appendChild(e); };
+  h('Spécialisation');
+  for (const [k, sp] of Object.entries(SPECS)) {
+    const d = document.createElement('div'); d.className = 'skill spec' + (S.spec === k ? ' on' : '');
+    d.innerHTML = `<canvas class="ic"></canvas><div class="tx"><b>${sp.name}</b>${sp.desc}<br><span class="rk">${sp.passive.join(' · ')}</span></div>`;
+    drawIcon(d.querySelector('canvas'), sp.icon);
+    d.onclick = () => { if (S.spec === k) return; S.spec = k; SFX.equip(); H.saveGame(); H.refreshHeroLooks(); refreshHero(); };
     list.appendChild(d);
   }
+  h('Compétences');
+  const shown = ['charge', mainSkill(S), 'execute', 'leap', 'parry', 'avatar'];
+  for (const k of shown) skillRow(list, S, k, WSK[k], SKILL_MAX, WSK[k].lvl);
+  for (const [k, p] of Object.entries(PASSIVES)) skillRow(list, S, k, p, SKILL_MAX, 0);
+  h('Talents (choisis 1 talent par ligne)');
+  TALENT_ROWS.forEach((row, i) => {
+    const lk = S.level < row.lvl;
+    const d = document.createElement('div'); d.className = 'trow span' + (lk ? ' locked' : '');
+    d.innerHTML = `<div class="tlv">Niv. ${row.lvl}</div>`;
+    for (const o of row.opts) {
+      const b = document.createElement('div'); b.className = 'tal' + (S.talents[i] === o.id ? ' on' : '');
+      b.innerHTML = `<canvas class="ic"></canvas><b>${o.name}</b><span>${o.desc}</span>`;
+      drawIcon(b.querySelector('canvas'), o.icon);
+      b.onclick = () => { if (lk) { lootMsg(`Débloqué au niveau ${row.lvl}`, '#c9b8e8'); return; } S.talents[i] = S.talents[i] === o.id ? undefined : o.id; SFX.equip(); H.saveGame(); H.refreshHeroLooks(); refreshHero(); };
+      d.appendChild(b);
+    }
+    list.appendChild(d);
+  });
   // marchand
   const shop = $('shopList'); shop.innerHTML = '';
   const ilvl = S.level + Math.floor(S.best / 2);
@@ -363,6 +404,18 @@ export function refreshHero() {
   }
   const sell = $('sellBag'); sell.innerHTML = '';
   S.bag.forEach((it) => sell.appendChild(itemCell(it, () => tip(it, 'sell'))));
+}
+function skillRow(list, S, k, sk, max, lvl) {
+  const rank = S.skills[k] || 0;
+  const d = document.createElement('div'); d.className = 'skill';
+  const lockLv = lvl && S.level < lvl;
+  d.innerHTML = `<canvas class="ic"></canvas><div class="tx"><b>${sk.name}${sk.rage ? ` <span class="rk">· ${sk.rage} rage</span>` : ''}</b><span class="rk">${lockLv ? 'Débloqué au niveau ' + lvl : `Rang ${rank}/${max}`}</span><br>${sk.desc(Math.max(1, rank))}</div><button>+</button>`;
+  drawIcon(d.querySelector('canvas'), sk.icon);
+  const btn = d.querySelector('button');
+  btn.disabled = S.points <= 0 || rank >= max || lockLv;
+  if (lockLv) btn.textContent = 'Niv. ' + lvl;
+  btn.onclick = () => { S.points--; S.skills[k] = rank + 1; SFX.equip(); H.saveGame(); H.refreshHeroLooks(); refreshHero(); };
+  list.appendChild(d);
 }
 function lootPop(it) { SFX.loot(it.rarity); tip(it, 'bag'); }
 function itemCell(it, onClick) {
@@ -389,6 +442,8 @@ function tip(it, mode) {
   T.innerHTML = `<div class="nm" style="color:${RARITY[it.rarity].color}">${it.name}</div>
     <div class="sub">${RARITY[it.rarity].name} · ${SLOT_NAME[it.slot]} · Niveau d'objet ${it.ilvl}</div>
     <div class="st">${statLines(it, cmp)}</div>
+    ${it.power ? `<div class="pow">${it.power}</div>` : ''}
+    ${it.set ? setLines(it) : ''}
     ${cmp ? `<div class="sub" style="margin-top:6px">Comparé à : <span style="color:${RARITY[cur.rarity].color}">${cur.name}</span></div>` : ''}
     <div class="btns">${mode === 'bag' ? '<button class="primary" data-a="equip">Équiper</button><button data-a="sell">Vendre ' + it.value + ' or</button>' : mode === 'sell' ? '<button class="primary" data-a="sell">Vendre ' + it.value + ' or</button>' : ''}<button data-a="close">Fermer</button></div>`;
   T.querySelectorAll('button').forEach((b) => b.onclick = (e) => {
@@ -402,17 +457,9 @@ function tip(it, mode) {
     hideTip(); H.saveGame(); refreshHero();
   });
 }
+function setLines(it) {
+  const S = SETS[it.set], n = setCounts(G.save.equip)[it.set] || 0;
+  return `<div class="set"><b>Ensemble : ${S.name} (${n}/${S.slots.length})</b>${S.bonus.map(([k, t]) => `<span class="${n >= k ? 'g' : ''}">(${k}) ${t}</span>`).join('')}</div>`;
+}
 function hideTip() { $('tooltip').classList.add('hidden'); selected = null; }
 
-// compétences du guerrier
-function SKILLS() {
-  return {
-    charge: { name: 'Charge', icon: 'i_charge', max: 5, desc: (r) => `Fonce sur l'ennemi visé, l'étourdit ${(1.2 + r * 0.2).toFixed(1)} s. Recharge ${Math.max(4, 9 - r * 0.5)} s.` },
-    whirl: { name: 'Tourbillon', icon: 'i_whirl', max: 5, desc: (r) => `30 rage : 4 coups circulaires à ${Math.round((0.75 + r * 0.12) * 100)} % des dégâts.` },
-    shout: { name: 'Cri de guerre', icon: 'i_shout', max: 5, lvl: 3, desc: (r) => `+${25 + r * 5} % de dégâts pendant ${(10 + r * 1.5).toFixed(0)} s, soigne ${8 + r * 3} % et étourdit autour.` },
-    vigor: { name: 'Vigueur', icon: 'i_potion', max: 5, desc: (r) => `+${r * 6} % de vie maximum.` },
-    might: { name: 'Force brute', icon: 'i_attack', max: 5, desc: (r) => `+${r * 5} % de dégâts.` },
-    fury: { name: 'Fureur', icon: 'i_whirl', max: 5, desc: (r) => `+${r * 2} % de chances de coup critique.` },
-    iron: { name: 'Peau de fer', icon: 'i_warrior', max: 5, desc: (r) => `+${r * 8} % d'armure.` },
-  };
-}

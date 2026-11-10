@@ -76,7 +76,37 @@ const GLOW = [null, null, null, 0x3a8aff, 0xb050ff, 0xff8a20];
 
 const PREFIX = ['Robuste', 'Ancien', 'Maudit', 'Béni', 'Sinistre', 'Ardent', 'Glacial', 'Sombre', 'Vaillant', 'Funeste'];
 const SUFFIX = { str: "de l'Ours", sta: 'du Bastion', crit: 'du Faucon', haste: 'du Vent', armor: 'de la Tortue' };
-const LEGEND = ['Porte-Fléau', "Larme d'Azeroth", 'Cendre-Éternelle', 'Brise-Faille', 'Murmure du Néant', "Couronne d'Épines"];
+// Objets légendaires : chacun a un POUVOIR unique qui change la façon de jouer (comme dans Diablo)
+export const LEGENDARIES = {
+  mainhand: [
+    { id: 'ashbringer', name: 'Cendre-Éternelle', power: 'Tes coups enflamment les ennemis : +30 % des dégâts en brûlure sur 3 s.' },
+    { id: 'riftbreaker', name: 'Brise-Faille', power: 'Chaque 3e coup de ton enchaînement libère une onde de choc autour de toi.' },
+  ],
+  chest: [{ id: 'voidwhisper', name: 'Murmure du Néant', power: 'Chaque Parade réussie te rend 10 % de ta vie.' }],
+  head: [{ id: 'thorncrown', name: "Couronne d'Épines", power: 'Renvoie 40 % des dégâts de mêlée reçus à l\'attaquant.' }],
+  shoulders: [{ id: 'scourge', name: 'Porte-Fléau', power: 'Tuer un ennemi avec Exécution recharge la Charge et le Bond héroïque.' }],
+  offhand: [{ id: 'azerothtear', name: "Larme d'Azeroth", power: 'Bloquer ou parer un coup lance une décharge qui étourdit les ennemis proches.' }],
+  feet: [{ id: 'wanderer', name: 'Pas du Vagabond', power: 'La roulade laisse une traînée de feu derrière toi.' }],
+  hands: [{ id: 'titangrip', name: 'Poigne du Titan', power: 'Le Bond héroïque peut être utilisé 2 fois de suite.' }],
+  legs: [{ id: 'bloodlust', name: 'Jambières sanguinaires', power: 'Tuer un ennemi donne +25 % de vitesse d\'attaque pendant 4 s.' }],
+};
+// Ensembles : porter plusieurs pièces du même ensemble donne des bonus (comme dans WoW)
+export const SETS = {
+  warlord: { name: 'Seigneur de guerre', slots: ['head', 'shoulders', 'chest', 'hands', 'legs'], look: 'T_Knight_3_BaseColor',
+    bonus: [[2, '+10 % de dégâts'], [4, 'Frappe mortelle, Tourbillon et Exécution coûtent 10 rage de moins, +10 % de critique']] },
+  dawn: { name: "Rempart de l'Aube", slots: ['head', 'shoulders', 'chest', 'legs', 'feet'], look: 'T_Knight_2_BaseColor',
+    bonus: [[2, '+20 % d\'armure'], [4, 'Une Parade réussie libère une onde qui étourdit tout autour 2 s']] },
+};
+export function setCounts(equip) {
+  const c = {};
+  for (const s of SLOTS) { const it = equip[s]; if (it && it.set) c[it.set] = (c[it.set] || 0) + 1; }
+  return c;
+}
+export function legendaryPowers(equip) {
+  const p = new Set();
+  for (const s of SLOTS) { const it = equip[s]; if (it && it.legend) p.add(it.legend); }
+  return p;
+}
 
 export function rollRarity(bonus = 0) {
   const x = R() * 100 - bonus;
@@ -117,7 +147,24 @@ export function makeItem(slot, ilvl, rarity) {
     const v = s === 'crit' || s === 'haste' ? Math.max(1, Math.round(budget * 0.12 * (0.7 + R() * 0.6))) : Math.max(1, Math.round(budget * 0.35 * (0.7 + R() * 0.6)));
     it.stats[s] = v;
   }
-  it.name = rarity === 5 ? LEGEND[Math.floor(R() * LEGEND.length)]
+  // pièce d'ensemble (objets épiques, 35 % de chances si l'emplacement fait partie d'un ensemble)
+  if (rarity === 4 && R() < 0.35) {
+    const sets = Object.entries(SETS).filter(([, v]) => v.slots.includes(slot));
+    if (sets.length) {
+      const [k, S] = sets[Math.floor(R() * sets.length)];
+      it.set = k; it.look = { ...it.look, tex: S.look, metal: true };
+      if (/Peasant|Wizard|Ranger/.test(it.look.part || '')) it.look.part = { head: 'Knight_Head_Horns', shoulders: 'Knight_Acc_Pauldron_Spike', chest: 'Knight_Body_Armor', hands: 'Knight_Arms', legs: 'Knight_Legs_Armor', feet: 'Knight_Feet_Armor' }[slot] || it.look.part;
+      it.name = `${it.base} du ${S.name}`.replace('du Rempart', 'du Rempart');
+      if (k === 'dawn') it.name = `${it.base} du Rempart de l'Aube`;
+    }
+  }
+  if (rarity === 5) {
+    const L = LEGENDARIES[slot];
+    const pick = L[Math.floor(R() * L.length)];
+    it.legend = pick.id; it.power = pick.power;
+  }
+  if (it.set) { /* nom déjà donné */ } else
+  it.name = rarity === 5 ? LEGENDARIES[slot].find((l) => l.id === it.legend).name
     : rarity >= 3 ? `${it.base} ${PREFIX[Math.floor(R() * PREFIX.length)].toLowerCase()} ${SUFFIX[main]}`
     : rarity === 2 ? `${it.base} ${SUFFIX[main]}` : it.base;
   if (rarity === 0) it.name = it.base + ' usé' + (/e$/.test(it.base) ? 'e' : '');
@@ -146,5 +193,5 @@ export function looksOf(equip) {
 export function itemScore(it) {
   if (!it) return 0;
   const s = it.stats;
-  return (it.dmg || 0) * 2.2 * (it.speed || 1) + (s.armor || 0) * 0.6 + (s.str || 0) * 1.6 + (s.sta || 0) * 1.4 + (s.crit || 0) * 3 + (s.haste || 0) * 2.6;
+  return (it.dmg || 0) * 2.2 * (it.speed || 1) + (s.armor || 0) * 0.6 + (s.str || 0) * 1.6 + (s.sta || 0) * 1.4 + (s.crit || 0) * 3 + (s.haste || 0) * 2.6 + (it.legend ? 40 : 0) + (it.set ? 10 : 0);
 }

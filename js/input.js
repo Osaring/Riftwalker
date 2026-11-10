@@ -2,7 +2,8 @@
 // (Au clavier pour tester sur ordinateur : ZQSD/WASD, souris, J, K, L, I, Espace, H.)
 import { $ } from './util.js';
 
-export const input = { mx: 0, my: 0, camDX: 0, camDY: 0, held: {}, pressed: new Set(), stickActive: false };
+// aim : visée en cours (glisser depuis un bouton de compétence) ; aimed[nom] = direction choisie au relâcher
+export const input = { mx: 0, my: 0, camDX: 0, camDY: 0, held: {}, pressed: new Set(), stickActive: false, aim: null, aimed: {} };
 export function consume(name) { const had = input.pressed.has(name); input.pressed.delete(name); return had; }
 
 export function setupInput(onAnyTouch) {
@@ -37,17 +38,49 @@ export function setupInput(onAnyTouch) {
   const camEnd = (e) => { if (e.pointerId === cid) cid = null; };
   camZone.addEventListener('pointerup', camEnd); camZone.addEventListener('pointercancel', camEnd);
 
-  // boutons : un appui = une action ; garder appuyé est aussi connu (attaque en continu)
+  // boutons : un appui = une action ; garder appuyé est aussi connu (attaque en continu).
+  // Boutons « à viser » (data-aim) : comme dans Wild Rift, on garde le doigt dessus et on glisse
+  // pour choisir la direction ; la compétence part quand on relâche. Un simple appui = tir automatique.
+  // Relâcher sur la croix « annuler » ne lance rien.
+  const AIM_R = 85, cancel = $('aimCancel');
   document.querySelectorAll('[data-act]').forEach((b) => {
     const name = b.dataset.act;
-    b.addEventListener('pointerdown', (e) => { onAnyTouch && onAnyTouch(); input.pressed.add(name); input.held[name] = true; b.classList.add('pressed'); b.setPointerCapture(e.pointerId); e.preventDefault(); e.stopPropagation(); });
-    const up = () => { input.held[name] = false; b.classList.remove('pressed'); };
+    let ax = 0, ay = 0;
+    b.addEventListener('pointerdown', (e) => {
+      onAnyTouch && onAnyTouch();
+      b.classList.add('pressed'); b.setPointerCapture(e.pointerId); e.preventDefault(); e.stopPropagation();
+      if (b.dataset.aim && !b.classList.contains('cooling')) {
+        const r = b.getBoundingClientRect(); ax = r.left + r.width / 2; ay = r.top + r.height / 2;
+        input.aim = { name, type: b.dataset.aim, x: 0, y: 0, len: 0, cancel: false };
+        cancel && cancel.classList.add('on');
+        return;
+      }
+      input.pressed.add(name); input.held[name] = true;
+    });
+    b.addEventListener('pointermove', (e) => {
+      if (!input.aim || input.aim.name !== name) return;
+      let dx = e.clientX - ax, dy = e.clientY - ay; const l = Math.hypot(dx, dy);
+      if (l > AIM_R) { dx *= AIM_R / l; dy *= AIM_R / l; }
+      input.aim.x = dx / AIM_R; input.aim.y = -dy / AIM_R; input.aim.len = Math.min(1, l / AIM_R);
+      const over = document.elementFromPoint(e.clientX, e.clientY);
+      input.aim.cancel = !!(over && over.closest && over.closest('#aimCancel'));
+      cancel && cancel.classList.toggle('hot', input.aim.cancel);
+    });
+    const up = () => {
+      input.held[name] = false; b.classList.remove('pressed');
+      if (input.aim && input.aim.name === name) {
+        const a = input.aim; input.aim = null; cancel && cancel.classList.remove('on', 'hot');
+        if (a.cancel) return;
+        input.aimed[name] = a.len > 0.18 ? { x: a.x, y: a.y, len: a.len } : null; // petit appui = automatique
+        input.pressed.add(name);
+      }
+    };
     b.addEventListener('pointerup', up); b.addEventListener('pointercancel', up);
   });
 
   // clavier / souris (tests sur ordinateur)
   const keys = new Set();
-  const map = { KeyJ: 'attack', KeyK: 'skill1', KeyL: 'skill2', KeyI: 'skill3', Space: 'roll', KeyH: 'potion' };
+  const map = { KeyJ: 'attack', KeyK: 'skill1', KeyL: 'skill2', KeyI: 'skill3', KeyU: 'ult', KeyO: 'parry', Space: 'roll', KeyH: 'potion' };
   addEventListener('keydown', (e) => {
     if (e.repeat) return; keys.add(e.code);
     if (map[e.code]) { input.pressed.add(map[e.code]); input.held[map[e.code]] = true; }
