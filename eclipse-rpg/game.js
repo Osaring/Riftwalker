@@ -1251,10 +1251,13 @@ function draw() {
     diamond(l.x, l.y, 12, 18, l.color);
     g.shadowBlur = 0;
   }
-  function warrior(x, y, r, body, face, kind, phase) {
+  function warrior(x, y, r, body, face, kind, phase, motion = 0, facing = 1, strike = 0) {
     g.save();
     g.translate(x, y);
-    let bob = Math.sin(t * 5 + phase) * 2;
+    const recoil = kind !== 'hero' && motion > 0 ? motion / 0.2 : 0;
+    g.translate(-facing * recoil * 7, recoil * 3);
+    if(kind === 'hero' && strike > 0) g.rotate(facing * Math.sin(Math.min(1,strike / 0.31) * Math.PI) * 0.12);
+    let bob = Math.sin(t * (kind === 'hero' && motion > 0 ? 13 : 5) + phase) * (kind === 'hero' && motion > 0 ? 4 : 2);
     g.translate(0, bob);
     g.fillStyle = "#07111dcc";
     g.beginPath();
@@ -1366,6 +1369,9 @@ function draw() {
       e.boss ? "#4b2036" : "#41293f",
       e.type,
       e.phase,
+      e.hit,
+      e.x < hero.x ? -1 : 1,
+      0,
     );
     if (e.boss && e.recover > 0) {
       g.fillStyle = "#a5f4c0";
@@ -1398,8 +1404,11 @@ function draw() {
         : "#604a34",
     "hero",
     0,
+    Math.hypot(...Object.values(movementInput())) > 0.08 ? 1 : 0,
+    hero.dir,
+    atk,
   );
-  if (invuln > 0) {
+  if (atk > 0) { const k = 1 - atk / (hero.cls === 'Assassin' ? 0.2 : 0.31);g.save();g.translate(hero.x,hero.y-27);g.rotate(aimAngle);g.strokeStyle=hero.cls==='Mage'?'#80e9ff':hero.cls==='Assassin'?'#c7a2ff':'#ffe5a0';g.lineWidth=combo===3?8:5;g.lineCap='round';g.shadowColor=g.strokeStyle;g.shadowBlur=18;g.globalAlpha=Math.max(0,1-k);g.beginPath();g.arc(0,0,37,-1.3+k*1.9,-.3+k*2.3);g.stroke();g.restore();}   if (invuln > 0) {
     g.strokeStyle = "#a0e8ff";
     g.lineWidth = 3;
     g.beginPath();
@@ -1468,7 +1477,7 @@ document.addEventListener("visibilitychange", () => {
   if (document.hidden) setPaused(true);
 });
 window.addEventListener("pagehide", saveGame);
-const ECLIPSE_VERSION = 16;
+const ECLIPSE_VERSION = 17;
 let availableVersion = ECLIPSE_VERSION;
 async function checkForUpdate(manual = false) {
   const btn = document.getElementById("checkUpdate");
