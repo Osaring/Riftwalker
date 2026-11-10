@@ -1,10 +1,18 @@
-# ECLIPSE 0.15
+# ECLIPSE 0.16
 
 Le jeu est isolé dans ce dossier. Le jeu Riftwalker et son service worker à la racine restent inchangés.
 
 ## Structure
 
 `index.html` contient l’interface, `styles.css` sa présentation et `game.js` la simulation. Les URL des ressources portent le numéro de version pour éviter une ancienne copie en cache. `version.json` annonce la mise à jour aux sessions ouvertes.
+
+## Améliorations 0.16
+
+Après chaque salle, le bouton « Choisir mon amélioration » ouvre trois cartes : Puissance ajoute 8 % des dégâts de base aux attaques et pouvoirs, Vitalité augmente le maximum de vie de 20 et soigne 20 PV, Énergie ajoute 1 mana régénéré par seconde. Les bonus sont cumulatifs pendant l’aventure et repartent à zéro avec un nouveau personnage. Les valeurs avant/après figurent sur les cartes et le sac affiche un récapitulatif.
+
+Le choix suspend la simulation. Un retour à la salle permet encore d’inspecter le butin et le sac. La sélection récupère les objets restants puis lance la salle suivante. Le choix est consommé avant la transition, ce qui empêche les doubles appuis d’accorder deux bonus. Une sauvegarde reprend soit le combat, soit le choix en attente. Les anciennes parties reçoivent simplement des compteurs de bonus à zéro, sans réappliquer de santé ni changer leur équipement.
+
+Les 54 contrôles de logique passent, dont le gel du combat pendant le choix, les dégâts réels, la récupération de mana, la sauvegarde et la protection contre les doubles sélections. L’interface prévoit une disposition verticale en portrait et trois colonnes en paysage, avec défilement sur les petits écrans. Le rendu navigateur et les gestes Safari restent à vérifier sur appareil ; les tests de simulation ne valident pas ces aspects.
 
 ## Combat 0.15
 

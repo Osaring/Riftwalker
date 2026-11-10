@@ -104,12 +104,24 @@ document.getElementById("soundToggle").addEventListener("click", () => {
   }
 });
 const SAVE_KEY = "eclipse_rpg_save_v1";
-let saveClock = 0;
+let saveClock = 0,
+  rewardOpen = false;
+const BLESSINGS = ["might", "vitality", "focus"];
+function blessingRank(id) {
+  return hero?.blessings?.[id] || 0;
+}
+function damageMultiplier() {
+  return 1 + blessingRank("might") * 0.08;
+}
+function manaRecovery() {
+  return 7 + blessingRank("focus");
+}
 function saveGame() {
   if (!running || !hero || hero.hp <= 0) return false;
   try {
     const data = {
       schema: 1,
+      rewardOpen,
       hero: { ...hero },
       room,
       level,
@@ -140,6 +152,14 @@ function readSave() {
     const integer = (v, min, max) => Number.isInteger(v) && finite(v, min, max);
     if (!data || data.schema !== 1 || !data.hero) return null;
     const h = data.hero;
+    if (
+      h.blessings !== undefined &&
+      (!h.blessings ||
+        !BLESSINGS.every((id) => integer(h.blessings[id], 0, 1e6)))
+    )
+      return null;
+    if (data.rewardOpen !== undefined && typeof data.rewardOpen !== "boolean")
+      return null;
     if (
       !["Guerrier", "Mage", "Assassin"].includes(h.cls) ||
       !finite(h.x, -440, 440) ||
@@ -230,6 +250,7 @@ function readSave() {
       )
         return null;
     }
+    if (data.rewardOpen && data.enemies.length !== 0) return null;
     return data;
   } catch (e) {
     return null;
@@ -265,6 +286,7 @@ function resumeGame() {
   }
   unlockAudio();
   hero = data.hero;
+  hero.blessings = hero.blessings || { might: 0, vitality: 0, focus: 0 };
   room = data.room;
   level = data.level;
   xp = data.xp;
@@ -310,6 +332,7 @@ function resumeGame() {
     room % 5 === 0 ? "block" : "none";
   toast("Bon retour dans ECLIPSE !");
   saveClock = 0;
+  if (data.rewardOpen) showRewards();
 }
 function start(cls) {
   if (!["Guerrier", "Mage", "Assassin"].includes(cls)) return;
@@ -331,6 +354,7 @@ function start(cls) {
     weapon: 1,
     defense: 0,
     equipped: { weapon: null, armor: null },
+    blessings: { might: 0, vitality: 0, focus: 0 },
   };
   room = 1;
   level = 1;
@@ -567,6 +591,7 @@ function attack() {
   let dmg =
     (hero.cls === "Mage" ? 22 : 19) *
     hero.weapon *
+    damageMultiplier() *
     (combo === 3 ? 2 : combo === 2 ? 1.25 : 1);
   hit(dmg, range, false);
   slashes.push({
@@ -600,7 +625,8 @@ function cast() {
   let range = hero.cls === "Mage" ? 245 : hero.cls === "Assassin" ? 175 : 160;
   let dmg =
     (hero.cls === "Mage" ? 72 : hero.cls === "Assassin" ? 57 : 49) *
-    hero.weapon;
+    hero.weapon *
+    damageMultiplier();
   hit(dmg, range, true);
   slashes.push({
     x: hero.x,
@@ -782,7 +808,7 @@ function movementInput() {
   };
 }
 function canPlay() {
-  return running && !paused && !bagOpen && !document.hidden;
+  return running && !paused && !bagOpen && !rewardOpen && !document.hidden;
 }
 function clearInput() {
   reset();
@@ -790,6 +816,9 @@ function clearInput() {
   keys = {};
 }
 function resetSession() {
+  rewardOpen = false;
+  document.getElementById("hud").inert = false;
+  document.getElementById("rewardOverlay").hidden = true;
   impactParticles = [];
   heroFlash = 0;
   clearInput();
@@ -809,7 +838,10 @@ function setPaused(value) {
   clearInput();
   document.getElementById("pauseOverlay").hidden = !paused;
   if (paused) saveGame();
-  else unlockAudio();
+  else {
+    unlockAudio();
+    if (rewardOpen) document.getElementById("rewardMight").focus();
+  }
 }
 addEventListener("keydown", (e) => {
   const key = e.key.toLowerCase();
@@ -858,6 +890,15 @@ function equipItem(id) {
   renderBag();
 }
 function renderBag() {
+  if (hero)
+    document.getElementById("blessingStats").textContent =
+      "Améliorations · Dégâts +" +
+      Math.round((damageMultiplier() - 1) * 100) +
+      " % · Vie max " +
+      hero.max +
+      " · Mana " +
+      manaRecovery() +
+      "/s";
   if (!hero) return;
   syncEquipment();
   document.getElementById("stats").textContent =
@@ -907,7 +948,7 @@ function renderBag() {
   }
 }
 function toggleBag() {
-  if (!running || paused) return;
+  if (!running || paused || rewardOpen) return;
   bagOpen = !bagOpen;
   clearInput();
   document.getElementById("inventory").style.display = bagOpen
@@ -959,7 +1000,7 @@ function update(dt) {
   atk = Math.max(0, atk - dt);
   skill = Math.max(0, skill - dt);
   dodge = Math.max(0, dodge - dt);
-  hero.mp = Math.min(100, hero.mp + dt * 7);
+  hero.mp = Math.min(100, hero.mp + dt * manaRecovery());
   let { x: dx, y: dy } = movementInput(),
     m = Math.hypot(dx, dy);
   if (m > 0.08) {
@@ -1427,7 +1468,7 @@ document.addEventListener("visibilitychange", () => {
   if (document.hidden) setPaused(true);
 });
 window.addEventListener("pagehide", saveGame);
-const ECLIPSE_VERSION = 15;
+const ECLIPSE_VERSION = 16;
 let availableVersion = ECLIPSE_VERSION;
 async function checkForUpdate(manual = false) {
   const btn = document.getElementById("checkUpdate");
@@ -1484,8 +1525,72 @@ setInterval(checkForUpdate, 30000);
 document.addEventListener("visibilitychange", () => {
   if (!document.hidden) checkForUpdate();
 });
+// The modal freezes combat. A selection is consumed synchronously before
+// advancing, so double taps cannot grant multiple rewards for one room.
+function showRewards() {
+  rewardOpen = true;
+  document.getElementById("hud").inert = true;
+  clearInput();
+  document.getElementById("rewardOverlay").hidden = false;
+  document.getElementById("rewardTitle").textContent =
+    room % 5 === 0 ? "Gardien vaincu !" : "Salle " + room + " terminée !";
+  document.getElementById("rewardSummary").textContent =
+    "Choisis un bonus pour cette aventure. " +
+    loot.length +
+    " objet" +
+    (loot.length === 1 ? "" : "s") +
+    " à récupérer.";
+  document.getElementById("mightPreview").textContent =
+    "Dégâts : +" +
+    blessingRank("might") * 8 +
+    " % → +" +
+    (blessingRank("might") + 1) * 8 +
+    " %";
+  document.getElementById("vitalityPreview").textContent =
+    "Vie max : " + hero.max + " → " + (hero.max + 20);
+  document.getElementById("focusPreview").textContent =
+    "Mana : " + manaRecovery() + "/s → " + (manaRecovery() + 1) + "/s";
+  document.getElementById("rewardMight").focus();
+}
 function nextRoom() {
-  if (!canPlay() || enemies.some((e) => e.hp > 0)) return;
+  if (!canPlay() || enemies.length !== 0) return;
+  showRewards();
+  saveGame();
+}
+function chooseBlessing(id) {
+  if (
+    !running ||
+    paused ||
+    bagOpen ||
+    document.hidden ||
+    !rewardOpen ||
+    enemies.length !== 0 ||
+    !BLESSINGS.includes(id)
+  )
+    return;
+  rewardOpen = false;
+  document.getElementById("hud").inert = false;
+  document.getElementById("rewardOverlay").hidden = true;
+  hero.blessings = hero.blessings || { might: 0, vitality: 0, focus: 0 };
+  hero.blessings[id]++;
+  if (id === "vitality") {
+    hero.max += 20;
+    hero.hp = Math.min(hero.max, hero.hp + 20);
+  }
+  sfx("level");
+  advanceRoom();
+  document.getElementById("pauseButton").focus();
+}
+function closeRewards() {
+  if (!rewardOpen || paused) return;
+  rewardOpen = false;
+  document.getElementById("hud").inert = false;
+  document.getElementById("rewardOverlay").hidden = true;
+  clearInput();
+  saveGame();
+  document.getElementById("nextRoom").focus();
+}
+function advanceRoom() {
   for (const l of loot) items.push(l);
   loot = [];
   room++;
@@ -1497,6 +1602,28 @@ function nextRoom() {
   toast(room % 5 === 0 ? "BOSS !" : "Salle " + room + " · Butin récupéré");
 }
 document.getElementById("nextRoom").addEventListener("click", nextRoom);
+for (const [id, key] of [
+  ["rewardMight", "might"],
+  ["rewardVitality", "vitality"],
+  ["rewardFocus", "focus"],
+])
+  document
+    .getElementById(id)
+    .addEventListener("click", () => chooseBlessing(key));
+document.getElementById("rewardBack").addEventListener("click", closeRewards);
+document
+  .getElementById("rewardOverlay")
+  .addEventListener("keydown", (event) => {
+    if (event.key !== "Tab" || paused) return;
+    const ids = ["rewardMight", "rewardVitality", "rewardFocus", "rewardBack"];
+    const current = ids.indexOf(document.activeElement.id);
+    event.preventDefault();
+    document
+      .getElementById(
+        ids[(current + (event.shiftKey ? -1 : 1) + ids.length) % ids.length],
+      )
+      .focus();
+  });
 document
   .getElementById("pauseButton")
   .addEventListener("click", () => setPaused(true));

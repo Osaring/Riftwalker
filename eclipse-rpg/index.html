@@ -8,7 +8,7 @@
     />
     <meta name="theme-color" content="#101626" />
     <title>ECLIPSE — RPG mobile</title>
-    <link rel="stylesheet" href="./styles.css?v=15" />
+    <link rel="stylesheet" href="./styles.css?v=16" />
   </head>
   <body>
     <canvas id="c"></canvas>
@@ -44,13 +44,13 @@
         🔊 Son
       </button>
       <div id="versionControls">
-        <span id="versionLabel">v0.15</span
+        <span id="versionLabel">v0.16</span
         ><button id="checkUpdate" type="button">↻ Vérifier</button>
       </div>
       <div id="saveStatus">💾 Sauvegarde locale</div>
       <div id="toast" role="status"></div>
       <button id="pauseButton" aria-label="Mettre en pause">Ⅱ Pause</button
-      ><button id="nextRoom" hidden>Récupérer le butin et continuer →</button>
+      ><button id="nextRoom" hidden>Choisir mon amélioration →</button>
       <div id="bottom">
         <div id="stick"><div id="knob"></div></div>
         <div class="controls">
@@ -63,8 +63,56 @@
     <div id="inventory">
       <b>🎒 Inventaire et équipement</b>
       <p id="stats">Arme : 1.00× · Armure : 0 %</p>
+      <p id="blessingStats"></p>
       <div id="items"></div>
       <button onclick="toggleBag()">Fermer</button>
+    </div>
+    <div
+      id="rewardOverlay"
+      hidden
+      role="dialog"
+      aria-modal="true"
+      aria-labelledby="rewardTitle"
+    >
+      <section class="reward-panel">
+        <span class="reward-eyebrow">LES FAVEURS DE L’ÉCLIPSE</span>
+        <h2 id="rewardTitle">Salle terminée !</h2>
+        <p id="rewardSummary"></p>
+        <div class="reward-choices">
+          <button id="rewardMight" class="reward-card might">
+            <span class="reward-icon" aria-hidden="true">⚔</span
+            ><span
+              ><b>Puissance</b
+              ><span class="reward-description"
+                >+8 % de dégâts de base.<br />Attaques et pouvoirs.</span
+              ><small id="mightPreview"></small
+            ></span>
+          </button>
+          <button id="rewardVitality" class="reward-card vitality">
+            <span class="reward-icon" aria-hidden="true">♥</span
+            ><span
+              ><b>Vitalité</b
+              ><span class="reward-description"
+                >+20 points de vie maximum.<br />Récupère aussi 20 PV.</span
+              ><small id="vitalityPreview"></small
+            ></span>
+          </button>
+          <button id="rewardFocus" class="reward-card focus">
+            <span class="reward-icon" aria-hidden="true">✦</span
+            ><span
+              ><b>Énergie</b
+              ><span class="reward-description"
+                >Récupère 1 mana de plus par seconde.</span
+              ><small id="focusPreview"></small
+            ></span>
+          </button>
+        </div>
+        <p class="reward-hint">
+          Un seul choix par salle. Le butin sera récupéré et la salle suivante
+          commencera.
+        </p>
+        <button id="rewardBack" class="reward-back">Retour à la salle</button>
+      </section>
     </div>
     <div id="pauseOverlay" hidden>
       <section>
@@ -93,6 +141,6 @@
         </p>
       </div>
     </div>
-    <script src="./game.js?v=15"></script>
+    <script src="./game.js?v=16"></script>
   </body>
 </html>

@@ -1,4 +1,4 @@
 {
-  "version": 15,
-  "notes": "Combat plus lisible : impacts, ennemis distincts, attaques de boss annoncées et fenêtres de riposte. Déplacements conservés."
+  "version": 16,
+  "notes": "Après chaque salle, choisis Puissance, Vitalité ou Énergie. Les améliorations se cumulent pendant ton aventure et sont sauvegardées."
 }

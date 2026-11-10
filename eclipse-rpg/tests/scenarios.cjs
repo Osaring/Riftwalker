@@ -94,6 +94,7 @@ module.exports = function verifyGame() {
   drop(100, 100);
   const oldItemCount = items.length;
   nextRoom();
+  chooseBlessing("might");
   check(
     "next room collects remaining loot",
     room === previousRoom + 1 &&
@@ -134,6 +135,8 @@ module.exports = function verifyGame() {
     hero.equipped.weapon === null && hero.weapon === 1,
   );
   const old = JSON.parse(JSON.stringify(saved));
+  delete old.hero.blessings;
+  delete old.rewardOpen;
   delete old.combat;
   delete old.bolts;
   delete old.hazards;
@@ -297,6 +300,139 @@ module.exports = function verifyGame() {
   check(
     "impact effects do not slow movement",
     Math.abs(hero.x - pxBefore - 28.5) < 1e-8,
+  );
+  start("Guerrier");
+  nextRoom();
+  check(
+    "reward unavailable while enemies are alive",
+    !rewardOpen && room === 1,
+  );
+  enemies = [];
+  loot = [];
+  hero.hp = 20;
+  nextRoom();
+  check(
+    "cleared room offers three rewards before advancing",
+    rewardOpen && room === 1 && !canPlay(),
+  );
+  const rewardSnapshot = JSON.stringify({ hero, room, atk, skill, dodge });
+  jo = { x: 1, y: 0 };
+  update(1);
+  attack();
+  cast();
+  evade();
+  check(
+    "reward screen freezes movement and combat",
+    JSON.stringify({ hero, room, atk, skill, dodge }) === rewardSnapshot,
+  );
+  chooseBlessing("invalid");
+  check(
+    "invalid reward cannot advance or grant bonus",
+    room === 1 && rewardOpen && blessingRank("might") === 0,
+  );
+  setPaused(true);
+  chooseBlessing("might");
+  check(
+    "paused reward cannot be selected",
+    rewardOpen && blessingRank("might") === 0,
+  );
+  setPaused(false);
+  saveGame();
+  rewardOpen = false;
+  resumeGame();
+  check(
+    "pending choice reopens after resume",
+    rewardOpen && room === 1 && hero.hp === 20,
+  );
+  chooseBlessing("vitality");
+  const roomAfterReward = room;
+  chooseBlessing("vitality");
+  check(
+    "vitality granted once with healing and next room",
+    hero.max === 120 &&
+      hero.hp === 64 &&
+      blessingRank("vitality") === 1 &&
+      room === roomAfterReward &&
+      room === 2,
+  );
+  saveGame();
+  resumeGame();
+  check(
+    "vitality resume does not reapply max health",
+    hero.max === 120 && blessingRank("vitality") === 1 && !rewardOpen,
+  );
+  enemies = [];
+  loot = [];
+  nextRoom();
+  closeRewards();
+  check(
+    "back preserves room and grants nothing",
+    room === 2 && !rewardOpen && blessingRank("might") === 0,
+  );
+  nextRoom();
+  chooseBlessing("might");
+  const dummy = enemies[0];
+  dummy.x = hero.x + 30;
+  dummy.y = hero.y;
+  dummy.hp = dummy.max = 1000;
+  enemies = [dummy];
+  atk = 0;
+  comboWindow = 0;
+  attack();
+  check(
+    "might improves actual attack damage by eight percent",
+    Math.abs(dummy.hp - (1000 - 19 * 1.08)) < 1e-8,
+  );
+  dummy.hp = 1000;
+  skill = 0;
+  hero.mp = 100;
+  cast();
+  check(
+    "might also improves power damage",
+    Math.abs(dummy.hp - (1000 - 49 * 1.08)) < 1e-8,
+  );
+  enemies = [];
+  loot = [];
+  nextRoom();
+  chooseBlessing("focus");
+  enemies = [];
+  bolts = [];
+  hazards = [];
+  clearInput();
+  hero.mp = 0;
+  update(1);
+  check(
+    "energy increases actual mana recovery",
+    hero.mp === 8 && blessingRank("focus") === 1,
+  );
+  saveGame();
+  resumeGame();
+  check(
+    "all selected bonuses survive reload",
+    blessingRank("might") === 1 &&
+      blessingRank("focus") === 1 &&
+      blessingRank("vitality") === 1 &&
+      hero.max === 120,
+  );
+  const corrupt = JSON.parse(localStorage.getItem(SAVE_KEY));
+  corrupt.hero.blessings.might = -1;
+  localStorage.setItem(SAVE_KEY, JSON.stringify(corrupt));
+  check("negative bonus save is rejected", readSave() === null);
+  start("Mage");
+  check(
+    "new adventure resets all bonuses",
+    BLESSINGS.every((k) => blessingRank(k) === 0) &&
+      hero.max === 100 &&
+      !rewardOpen,
+  );
+  const legacy = JSON.parse(localStorage.getItem(SAVE_KEY));
+  delete legacy.hero.blessings;
+  delete legacy.rewardOpen;
+  localStorage.setItem(SAVE_KEY, JSON.stringify(legacy));
+  resumeGame();
+  check(
+    "pre-upgrade saves resume with zero bonuses",
+    BLESSINGS.every((k) => blessingRank(k) === 0) && running,
   );
   return results;
 };

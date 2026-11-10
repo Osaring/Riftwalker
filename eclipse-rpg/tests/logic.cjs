@@ -28,6 +28,7 @@ function element(id) {
           bottom: 814,
         };
       },
+      focus() {},
       replaceChildren() {},
       appendChild() {},
       append() {},
@@ -51,7 +52,7 @@ const sandbox = {
   addEventListener: () => {},
   URL,
   location: { href: "http://localhost/eclipse-rpg/" },
-  fetch: async () => ({ ok: true, json: async () => ({ version: 14 }) }),
+  fetch: async () => ({ ok: true, json: async () => ({ version: 16 }) }),
   localStorage: {
     getItem: (k) => storage.get(k) || null,
     setItem: (k, v) => storage.set(k, v),
