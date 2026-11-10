@@ -9,10 +9,10 @@
 import * as THREE from 'three';
 import { store } from './util.js';
 
-// deux styles : « rift » (façon Wild Rift : lumière de jour, couleurs peintes) et « anime »
-export const STYLE = store.get('rw_style', 'rift') === 'anime' ? 'anime' : 'rift';
+// deux styles : « sombre » (réaliste façon Diablo, par défaut) et « anime »
+export const STYLE = store.get('rw_style', 'dark') === 'anime' ? 'anime' : 'dark';
 export const ANIME = STYLE === 'anime';
-export const RIFT = !ANIME;
+export const DARK = !ANIME;
 export function setStyle(s) { store.set('rw_style', s); location.reload(); }
 
 // rampe de lumière en 3 marches (filtre « au plus proche » = marches nettes, sans dégradé)

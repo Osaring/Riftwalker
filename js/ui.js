@@ -78,8 +78,8 @@ export function setup(game, handlers) {
   mb.onclick = () => { unlock(); settings.music = !settings.music; G.save.music = settings.music; applyVolumes(); lab(); H.saveGame(); };
   lab();
   // style graphique : animé japonais ou classique (recharge le jeu pour tout reconstruire)
-  $('styleBtn').textContent = 'Style : ' + (ANIME ? 'Animé' : 'Wild Rift');
-  $('styleBtn').onclick = () => { SFX.ui(); setStyle(ANIME ? 'rift' : 'anime'); };
+  $('styleBtn').textContent = 'Style : ' + (ANIME ? 'Animé' : 'Sombre');
+  $('styleBtn').onclick = () => { SFX.ui(); setStyle(ANIME ? 'dark' : 'anime'); };
   document.querySelectorAll('.tabs button').forEach((b) => b.onclick = () => { SFX.ui(); tab(b.dataset.tab); });
 }
 export function show(id) {

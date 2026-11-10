@@ -1,4 +1,4 @@
 {
-  "version": "3.2.0",
-  "notes": "Vue et rendu façon Wild Rift : caméra plus haute, lumière de jour, barres de vie au-dessus des têtes, boutons en arc"
+  "version": "4.0.0",
+  "notes": "Style sombre et réaliste façon Diablo : pierre en relief, halo de lumière autour du héros, ombres portées"
 }

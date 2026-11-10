@@ -6,20 +6,21 @@ import * as THREE from 'three';
 import { loadAll, scene as piece } from './assets.js';
 import { Character, HERO_H } from './character.js';
 import { generateLevel, walkable, groundAt, ceilAt, moveCircle, lineFree } from './level.js';
-import { buildWorld, glowTexture, cutout } from './world.js';
+import { buildWorld, glowTexture, cutout, preloadStone } from './world.js';
 import { SLOTS, RARITY, randomDrop, makeItem, starterGear, looksOf, rollRarity } from './items.js';
 import { SFX, unlock, settings, applyVolumes, setMusic, musicTick } from './audio.js';
 import { input, setupInput, consume } from './input.js';
 import * as UI from './ui.js';
-import { ANIME, toon } from './style.js';
+import { ANIME, DARK, toon } from './style.js';
 import { R, clamp, lerp, damp, angWrap, angDiff, store, $ } from './util.js';
 
-export const APP_VERSION = '3.2.0';
+export const APP_VERSION = '4.0.0';
 
 // ---------------------------------------------------------------
 // MOTEUR 3D
 // ---------------------------------------------------------------
 const canvas = $('view');
+document.body.classList.toggle('dark', DARK);
 const renderer = new THREE.WebGLRenderer({ canvas, antialias: true, powerPreference: 'high-performance' });
 // résolution dynamique : on démarre net, et si l'iPhone n'arrive plus à suivre 60 images/s,
 // on baisse un peu la définition (invisible en pleine action) plutôt que de saccader
@@ -27,25 +28,39 @@ const DPR = window.devicePixelRatio || 1;
 const res = { max: Math.min(DPR, 1.6), min: Math.min(DPR, 0.85), cur: Math.min(DPR, 1.35), acc: 0, n: 0, calm: 0 };
 renderer.setPixelRatio(res.cur);
 renderer.outputColorSpace = THREE.SRGBColorSpace;
-// style animé : rendu « neutre » qui garde les couleurs franches (le rendu « film » les ternit)
-renderer.toneMapping = THREE.NeutralToneMapping;
-renderer.toneMappingExposure = ANIME ? 1.05 : 1.2;
+// style sombre : rendu « cinéma » (ACES) qui donne des noirs profonds et des lumières chaudes ;
+// style animé : rendu « neutre » qui garde les couleurs franches
+renderer.toneMapping = ANIME ? THREE.NeutralToneMapping : THREE.ACESFilmicToneMapping;
+renderer.toneMappingExposure = ANIME ? 1.05 : 1.15;
+if (DARK) { renderer.shadowMap.enabled = true; renderer.shadowMap.type = THREE.PCFSoftShadowMap; }
 const scene3 = new THREE.Scene();
 scene3.fog = new THREE.Fog(0x120c1c, 10, 42);
 const hemi = new THREE.HemisphereLight(0x8a90ff, 0x3a2030, 1.2); scene3.add(hemi);
-// lumière principale venue d'en haut à gauche, comme le « soleil » peint des cartes de LoL
-// style Wild Rift : un vrai « soleil » doré éclaire tout le donjon par le dessus
-const moon = new THREE.DirectionalLight(0xffe6c4, ANIME ? 1.25 : 3.2); moon.position.set(-0.5, 1, -0.35); scene3.add(moon);
+// style sombre : un faible clair de lune froid (qui projette les ombres des personnages)
+const moon = new THREE.DirectionalLight(ANIME ? 0xffe2c0 : 0x8ea4ff, ANIME ? 1.25 : 1.3); moon.position.set(-0.5, 1, -0.35); scene3.add(moon); scene3.add(moon.target);
+if (DARK) {
+  moon.castShadow = true; moon.shadow.mapSize.set(1024, 1024); moon.shadow.bias = -0.0005; moon.shadow.normalBias = 0.03;
+  const sc = moon.shadow.camera; sc.left = sc.bottom = -15; sc.right = sc.top = 15; sc.near = 1; sc.far = 40;
+}
 const camera = new THREE.PerspectiveCamera(40, 1, 0.5, 70);
-const heroLight = new THREE.PointLight(0xffd8a8, 14, 11, 1.2); scene3.add(heroLight); // lumière douce autour du héros (lisibilité)
+// style sombre : le halo de lumière chaude autour du héros, comme dans Diablo (au-delà, l'obscurité)
+const heroLight = new THREE.PointLight(0xffc890, DARK ? 36 : 14, DARK ? 13 : 11, DARK ? 1.6 : 1.2); scene3.add(heroLight);
+// reflets doux sur le métal (sans ça, une armure en métal paraît noire)
+if (DARK) {
+  const pm = new THREE.PMREMGenerator(renderer), es = new THREE.Scene();
+  es.add(new THREE.Mesh(new THREE.BoxGeometry(10, 10, 10), new THREE.MeshBasicMaterial({ color: 0x1a1a22, side: THREE.BackSide })));
+  const panel = (c, x, y, z) => { const m = new THREE.Mesh(new THREE.PlaneGeometry(3, 3), new THREE.MeshBasicMaterial({ color: c, side: THREE.DoubleSide })); m.position.set(x, y, z); m.lookAt(0, 0, 0); es.add(m); };
+  panel(0xffb070, -4, 3, 2); panel(0x7090ff, 4, 4, -3); panel(0xfff0e0, 0, 4.9, 0);
+  scene3.environment = pm.fromScene(es, 0.04).texture; scene3.environmentIntensity = 0.6;
+} // lumière douce autour du héros (lisibilité)
 const THEME_LOOK = ANIME ? {
   crypt: { fog: 0x120e24, hemi: [0x9aa8ff, 0x5a3a58, 1.9], name: 'La Crypte' },
   cave: { fog: 0x081028, hemi: [0x88d0ff, 0x503a78, 1.9], name: 'Les Grottes de cristal' },
   ruins: { fog: 0x0a1a10, hemi: [0xd0f8c8, 0x4a4a30, 1.85], name: 'Les Ruines englouties' },
 } : {
-  crypt: { fog: 0x2a2840, hemi: [0xd8dcff, 0x6a5a6a, 2.3], name: 'La Crypte' },
-  cave: { fog: 0x18284a, hemi: [0xb8e4ff, 0x5a5a8a, 2.4], name: 'Les Grottes de cristal' },
-  ruins: { fog: 0x24382a, hemi: [0xeeffe4, 0x6a6a48, 2.3], name: 'Les Ruines englouties' },
+  crypt: { fog: 0x050407, hemi: [0x5a6488, 0x1a1210, 0.55], name: 'La Crypte' },
+  cave: { fog: 0x03060c, hemi: [0x4a6a98, 0x141828, 0.6], name: 'Les Grottes de cristal' },
+  ruins: { fog: 0x040705, hemi: [0x6a8070, 0x181a10, 0.6], name: 'Les Ruines englouties' },
 }; const _OLD_LOOK = {
   crypt: { fog: 0x140e1e, hemi: [0xb0a8ff, 0x5a3a48, 1.6], name: 'La Crypte' },
   cave: { fog: 0x0a1224, hemi: [0x8ac8ff, 0x483060, 1.7], name: 'Les Grottes de cristal' },
@@ -118,9 +133,9 @@ const P = {
 };
 function buildHero() {
   if (P.ch) P.ch.dispose();
-  P.ch = new Character({ height: HERO_H, hair: ['Hair_SimpleParted', 'Hair_Beard', 'Eyebrows_Regular'] });
+  P.ch = new Character({ height: HERO_H, rim: DARK ? 0x9ab0ff : undefined, rimS: DARK ? 0.22 : undefined, hair: ['Hair_SimpleParted', 'Hair_Beard', 'Eyebrows_Regular'] });
   // cercle doré sous le héros (repère visuel comme sous les champions de LoL)
-  const ring = new THREE.Mesh(new THREE.RingGeometry(0.62, 0.72, 40), new THREE.MeshBasicMaterial({ color: ANIME ? 0xffd36a : 0x5cf0b0, transparent: true, opacity: 0.75, depthWrite: false, blending: THREE.AdditiveBlending }));
+  const ring = new THREE.Mesh(new THREE.RingGeometry(0.62, 0.72, 40), new THREE.MeshBasicMaterial({ color: ANIME ? 0xffd36a : 0xffc070, transparent: true, opacity: ANIME ? 0.75 : 0.22, depthWrite: false, blending: THREE.AdditiveBlending }));
   ring.rotation.x = -Math.PI / 2; ring.position.y = 0.04; ring.renderOrder = 2; P.ch.group.add(ring);
   P.ch.setLooks(looksOf(G.save.equip));
   scene3.add(P.ch.group);
@@ -145,7 +160,7 @@ const SKIN = { crypt: [0xb8b0a0, 0x7affd0], cave: [0x9a88c8, 0x5ad8ff], ruins: [
 function spawnEnemy(type, x, z, room) {
   const T = ETYPES[type], f = G.save.floor;
   const skin = SKIN[G.L.theme];
-  const ch = new Character({ height: T.height, rim: type === 'boss' ? 0xb070ff : 0xff6a50, rimS: 0.45, skin: type === 'skeleton' ? 0xe0d8c8 : skin[0], eyes: type === 'boss' ? 0xff3a1a : skin[1] });
+  const ch = new Character({ height: T.height, rim: type === 'boss' ? 0xb070ff : DARK ? 0x80301c : 0xff6a50, rimS: DARK ? 0.3 : 0.45, skin: type === 'skeleton' ? 0xe0d8c8 : skin[0], eyes: type === 'boss' ? 0xff3a1a : skin[1] });
   ch.setLooks(T.looks);
   scene3.add(ch.group);
   const hpM = 1 + 0.38 * (f - 1), dmM = 1 + 0.2 * (f - 1);
@@ -753,7 +768,8 @@ function updatePlayer(dt) {
   P.ch.group.position.set(P.x, P.y, P.z);
   P.ch.group.rotation.y = P.face + (P.state === 'whirl' ? P.spin : 0);
   P.ch.update(dt);
-  heroLight.position.set(P.x, P.y + 2.6, P.z);
+  heroLight.position.set(P.x, P.y + (DARK ? 3.4 : 2.6), P.z);
+  if (DARK) { moon.target.position.set(P.x, P.y, P.z); moon.position.set(P.x - 8, P.y + 16, P.z - 5.6); }
 
   // portail
   if (L.portal && !G.bossAlive && G.world.portal && G.world.portal.userData.openT > 0.6 && Math.hypot(P.x - L.portal.x, P.z - L.portal.z) < 1.6) nextFloor();
@@ -915,7 +931,7 @@ function updateCamera(dt) {
   const ox = Math.sin(cam.shakeT * 47) * sh * 0.3, oy = Math.sin(cam.shakeT * 61 + 1.3) * sh * 0.3;
   camera.position.set(cam.fx + ox, cam.fy + Math.sin(CAM_PITCH) * D + oy, cam.fz - Math.cos(CAM_PITCH) * D);
   tv.set(cam.fx + ox, cam.fy, cam.fz); camera.lookAt(tv);
-  scene3.fog.near = D + 4; scene3.fog.far = D + 30;
+  if (DARK) { scene3.fog.near = D + 2; scene3.fog.far = D + 16; } else { scene3.fog.near = D + 4; scene3.fog.far = D + 30; }
   // trou de visibilité : position du héros à l'écran (en pixels) et sa distance à la caméra
   camera.updateMatrixWorld();
   hv.set(P.x, P.y + 1, P.z).applyMatrix4(camera.matrixWorldInverse);
@@ -992,7 +1008,7 @@ async function boot() {
   $('versionLabel').textContent = 'v' + APP_VERSION;
   requestAnimationFrame(frame);
   try {
-    await loadAll((p) => UI.loading(p * 0.9));
+    await Promise.all([loadAll((p) => UI.loading(p * 0.9)), DARK ? preloadStone() : null]);
   } catch (e) { UI.loadError(); console.error(e); return; }
   UI.loading(0.95);
   await UI.loadIcons();

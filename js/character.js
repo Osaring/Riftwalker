@@ -127,6 +127,7 @@ export class Character {
   }
 
   collectMats() {
+    this.root.traverse((o) => { if (o.isMesh && !o.userData.outline) o.castShadow = true; });
     this.mats = [];
     this.root.traverse((o) => { if (o.isMesh && o.material.emissive && !/Eye/.test(o.material.name)) { this.mats.push(o.material); o.userData.e0 = o.material.emissive.clone(); o.userData.ei0 = o.material.emissiveIntensity; } });
     this.baseE = this.mats.map((m) => [m.emissive.clone(), m.emissiveIntensity]);

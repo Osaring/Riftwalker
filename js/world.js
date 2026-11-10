@@ -9,7 +9,7 @@ import * as THREE from 'three';
 import { mergeGeometries } from 'three/addons/utils/BufferGeometryUtils.js';
 import { scene as piece, A } from './assets.js';
 import { fbm, noise2 } from './util.js';
-import { toon, ANIME } from './style.js';
+import { toon, ANIME, DARK } from './style.js';
 
 const CHUNK = 16;
 export const WALL_H = 2.8; // hauteur des murs : assez bas pour qu'on voie la salle d'en haut (comme LoL)
@@ -60,8 +60,34 @@ function textures(renderer) {
   return baked;
 }
 
-// matériaux par ambiance : couleurs franches façon jeu moderne (pas réaliste terne)
+// textures de pierre réalistes (générées par tools/gen_textures.py) : couleur + relief
+const stoneCache = {};
+const texL = new THREE.TextureLoader();
+export function stoneTex(name, srgb = true) {
+  if (stoneCache[name]) return stoneCache[name];
+  const t = texL.load(`assets/tex/stone/${name}.jpg`);
+  t.wrapS = t.wrapT = THREE.RepeatWrapping; t.anisotropy = 4;
+  if (srgb) t.colorSpace = THREE.SRGBColorSpace;
+  return (stoneCache[name] = t);
+}
+// précharge toutes les textures de pierre (appelé pendant l'écran de chargement)
+export function preloadStone() {
+  const names = ['crypt_floor', 'crypt_wall', 'ruins_floor', 'ruins_wall', 'cave_floor', 'cave_wall', 'rubble'];
+  return Promise.all(names.flatMap((n) => [[n + '_c', true], [n + '_n', false]]).map(([n, srgb]) => new Promise((ok) => {
+    const t = texL.load(`assets/tex/stone/${n}.jpg`, () => ok(), undefined, () => ok());
+    t.wrapS = t.wrapT = THREE.RepeatWrapping; t.anisotropy = 4; if (srgb) t.colorSpace = THREE.SRGBColorSpace;
+    stoneCache[n] = t;
+  })));
+}
+
 function materials(theme, T) {
+  if (DARK) { // réaliste et sombre : pierre avec relief, éclairée par les torches
+    const S = (name, color, o = {}) => new THREE.MeshStandardMaterial({ map: stoneTex(name + '_c'), normalMap: stoneTex(name + '_n', false), normalScale: new THREE.Vector2(1.4, 1.4), color, roughness: 0.88, metalness: 0, side: THREE.DoubleSide, vertexColors: true, ...o });
+    const cap = S('rubble', 0x8a8a8a);
+    if (theme === 'cave') return { floor: S('cave_floor', 0xd0d4e0), wall: S('cave_wall', 0xc8cce0), ceil: cap };
+    if (theme === 'ruins') return { floor: S('ruins_floor', 0xffffff), wall: S('ruins_wall', 0xffffff), ceil: cap };
+    return { floor: S('crypt_floor', 0xffffff), wall: S('crypt_wall', 0xffffff), ceil: cap };
+  }
   if (ANIME) { // décor d'animé : aplats nets, dessus de roche uni (pas de texture chargée)
     const M2 = (o) => toon(new THREE.MeshStandardMaterial({ roughness: 0.92, metalness: 0, side: THREE.DoubleSide, vertexColors: true, ...o }));
     if (theme === 'cave') return { floor: M2({ map: T.floor, color: 0x6a6aa8 }), wall: M2({ map: T.rock, color: 0x9098d0 }), ceil: M2({ color: 0x34366a }) };
@@ -108,7 +134,7 @@ function buildShell(L, group, mats) {
     for (let h = 0; h < q.length; h++) { const k = q[h], i = k % W, j = (k / W) | 0;
       for (const [di, dj] of [[1, 0], [-1, 0], [0, 1], [0, -1]]) { const ii = i + di, jj = j + dj; if (ii < 0 || jj < 0 || ii >= W || jj >= H) continue; const kk = jj * W + ii; if (dist[kk] > dist[k] + 1) { dist[kk] = dist[k] + 1; q.push(kk); } } } }
   const dAt = (x, z) => { const i = Math.floor(x), j = Math.floor(z); return (i >= 0 && j >= 0 && i < W && j < H) ? dist[j * W + i] : 0; };
-  const moss = theme === 'ruins' ? [0.75, 1.05, 0.7] : theme === 'cave' ? [0.8, 0.85, 1.15] : [1.08, 0.9, 0.95];
+  const moss = DARK ? (theme === 'ruins' ? [0.85, 0.98, 0.8] : [0.92, 0.92, 0.95]) : theme === 'ruins' ? [0.75, 1.05, 0.7] : theme === 'cave' ? [0.8, 0.85, 1.15] : [1.08, 0.9, 0.95];
   const colOf = (kind, v) => {
     const [x, y, z] = v, n = fbm(x * 0.13, z * 0.13, 7), m = fbm(x * 0.05 + 3, z * 0.05, 11);
     let k = 0.82 + 0.36 * n, t = Math.max(0, m - 0.5) * 2;
@@ -118,7 +144,7 @@ function buildShell(L, group, mats) {
     return [k * (1 + (moss[0] - 1) * t), k * (1 + (moss[1] - 1) * t), k * (1 + (moss[2] - 1) * t)];
   };
   const pushTri = (b, a, c, d, uvs) => { b.pos.push(...a, ...c, ...d); b.uv.push(...uvs); b.col.push(...colOf(b.kind, a), ...colOf(b.kind, c), ...colOf(b.kind, d)); };
-  const fuv = cave ? 0.25 : 0.5;
+  const fuv = DARK ? (cave ? 0.2 : 0.3) : cave ? 0.25 : 0.5; // taille des dalles à l'écran
   // hauteur du sol « prolongée » sous la roche (pour poser le dessus des murs)
   const T = new Float32Array(W * H).fill(-99);
   for (let k = 0; k < W * H; k++) if (grid[k] === 1) T[k] = height[k];
@@ -175,7 +201,8 @@ function buildShell(L, group, mats) {
       if ((ix - p1[0]) * dz - (iz - p1[1]) * dx > 0) { p1 = m2; p2 = m1; }
       const len = Math.hypot(p2[0] - p1[0], p2[1] - p1[1]);
       const ux = (p2[0] - p1[0]) / len, uz = (p2[1] - p1[1]) / len;
-      const u1 = (p1[0] * ux + p1[1] * uz) * 0.5, u2 = u1 + len * 0.5;
+      const ws = DARK ? (cave ? 0.25 : 0.36) : 0.5;
+      const u1 = (p1[0] * ux + p1[1] * uz) * ws, u2 = u1 + len * ws;
       const b1 = hOf(...p1[2]) - 0.6, b2 = hOf(...p2[2]) - 0.6, t1 = hOf(...p1[2]) + WALL_H, t2 = hOf(...p2[2]) + WALL_H;
       const wb = bin(cx, cz, 'wall');
       const rows = cave ? 4 : 1;
@@ -186,7 +213,7 @@ function buildShell(L, group, mats) {
         const V = (x, y, z, t) => { const o = caveOff(x, y, z), f = Math.min(1, (1 - t) * 3); return [x + o[0] * f, y, z + o[1] * f]; };
         const A1 = V(p1[0], ya1, p1[1], ta), B1 = V(p1[0], yb1, p1[1], tb), A2 = V(p2[0], ya2, p2[1], ta), B2 = V(p2[0], yb2, p2[1], tb);
         A1.base = B1.base = b1 + 0.6; A2.base = B2.base = b2 + 0.6;
-        const vs = cave ? 0.25 : 0.5;
+        const vs = cave ? 0.25 : ws;
         pushTri(wb, A1, B1, A2, [u1, ya1 * vs, u1, yb1 * vs, u2, ya2 * vs]);
         pushTri(wb, A2, B1, B2, [u2, ya2 * vs, u1, yb1 * vs, u2, yb2 * vs]);
       }
@@ -222,6 +249,7 @@ function buildShell(L, group, mats) {
     g.setAttribute('color', new THREE.Float32BufferAttribute(b.col, 3));
     g.computeVertexNormals(); g.computeBoundingSphere();
     const m = new THREE.Mesh(g, mats[b.kind]);
+    m.receiveShadow = DARK; // les personnages projettent leur ombre au sol
     group.add(m);
   }
   addCutout(mats.wall); addCutout(mats.ceil);
@@ -409,7 +437,7 @@ export function buildWorld(renderer, scene3, L) {
       if (!l) { pl.intensity = 0; return; }
       pl.position.set(l.x, l.y, l.z); pl.color.setHex(l.col);
       const flick = l.kind === 'torch' || l.kind === 'fire' ? 0.85 + 0.15 * Math.sin(time * 11 + l.x * 3) * Math.sin(time * 7.7 + l.z) : l.kind === 'portal' ? 0.8 + 0.2 * Math.sin(time * 2) : 1;
-      pl.intensity = l.i * (ANIME ? 3 : 1.8) * flick; pl.distance = l.kind === 'portal' ? 18 : 15;
+      pl.intensity = l.i * (ANIME ? 3 : 4.2) * flick; pl.distance = l.kind === 'portal' ? 18 : 15;
     });
   }
   function dispose() {
