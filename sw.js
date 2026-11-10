@@ -1,9 +1,9 @@
 // Service worker : garde une copie du jeu dans le téléphone pour jouer hors ligne.
 // À chaque mise à jour, changer VERSION ici + APP_VERSION dans js/main.js + version.json.
-const VERSION = 'riftwalker-4.0.0';
+const VERSION = 'riftwalker-4.0.1';
 const FILES = [
   './', 'index.html', 'style.css', 'manifest.json',
-  'js/main.js', 'js/assets.js', 'js/character.js', 'js/level.js', 'js/world.js', 'js/items.js', 'js/audio.js', 'js/input.js', 'js/ui.js', 'js/util.js', 'js/style.js',
+  'js/main.js', 'js/assets.js', 'js/character.js', 'js/level.js', 'js/world.js', 'js/items.js', 'js/audio.js', 'js/input.js', 'js/ui.js', 'js/util.js',
   'vendor/three.module.min.js', 'vendor/jsm/loaders/GLTFLoader.js', 'vendor/jsm/utils/BufferGeometryUtils.js', 'vendor/jsm/utils/SkeletonUtils.js',
   'assets/3d/gear.glb', 'assets/3d/anim.glb', 'assets/3d/hall.glb', 'assets/3d/nature.glb', 'assets/3d/props.glb',
   'assets/tex/T_Knight_2_BaseColor.jpg', 'assets/tex/T_Knight_3_BaseColor.jpg', 'assets/tex/T_Noble_2_BaseColor.jpg', 'assets/tex/T_Noble_3_BaseColor.jpg', 'assets/tex/T_Wizard_2_BaseColor.jpg', 'assets/tex/T_Wizard_3_BaseColor.jpg',

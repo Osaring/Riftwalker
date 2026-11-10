@@ -9,7 +9,6 @@ import * as THREE from 'three';
 import { mergeGeometries } from 'three/addons/utils/BufferGeometryUtils.js';
 import { scene as piece, A } from './assets.js';
 import { fbm, noise2 } from './util.js';
-import { toon, ANIME, DARK } from './style.js';
 
 const CHUNK = 16;
 export const WALL_H = 2.8; // hauteur des murs : assez bas pour qu'on voie la salle d'en haut (comme LoL)
@@ -33,33 +32,6 @@ export function addCutout(mat) {
   mat.customProgramCacheKey = () => 'cut' + (mat.type || '');
   mat.needsUpdate = true;
 }
-let baked = null; // textures photographiées une fois (sol et mur du château)
-
-// photographie une pièce 3D (vue de dessus ou de face) pour en faire une texture
-function bake(renderer, src, size, front) {
-  const rt = new THREE.WebGLRenderTarget(size, size, { colorSpace: THREE.SRGBColorSpace, generateMipmaps: true, minFilter: THREE.LinearMipmapLinearFilter, magFilter: THREE.LinearFilter, wrapS: THREE.RepeatWrapping, wrapT: THREE.RepeatWrapping, anisotropy: 4 });
-  const sc = new THREE.Scene(), obj = src.clone(true); sc.add(obj);
-  sc.add(new THREE.HemisphereLight(0xffffff, 0xc0b0a0, 3.2));
-  const dl = new THREE.DirectionalLight(0xffffff, 1.4); dl.position.set(-0.6, 1, front ? 1 : -0.4); sc.add(dl);
-  obj.updateMatrixWorld(true);
-  const bb = new THREE.Box3().setFromObject(obj), c = bb.getCenter(new THREE.Vector3()), s = bb.getSize(new THREE.Vector3());
-  let cam;
-  if (front) { cam = new THREE.OrthographicCamera(-s.x / 2, s.x / 2, s.y / 2, -s.y / 2, 0.01, 50); cam.position.set(c.x, c.y, bb.max.z + 5); cam.lookAt(c.x, c.y, c.z); }
-  else { cam = new THREE.OrthographicCamera(-s.x / 2, s.x / 2, s.z / 2, -s.z / 2, 0.01, 50); cam.up.set(0, 0, -1); cam.position.set(c.x, bb.max.y + 5, c.z); cam.lookAt(c.x, c.y, c.z); }
-  const old = renderer.getRenderTarget(), cc = renderer.getClearColor(new THREE.Color()), ca = renderer.getClearAlpha(), tm = renderer.toneMapping;
-  renderer.toneMapping = THREE.NoToneMapping;
-  renderer.setRenderTarget(rt); renderer.setClearColor(0x000000, 1); renderer.clear(); renderer.render(sc, cam); renderer.setRenderTarget(old);
-  renderer.setClearColor(cc, ca); renderer.toneMapping = tm;
-  return rt.texture;
-}
-function textures(renderer) {
-  if (baked) return baked;
-  const rockMap = (() => { let m = null; piece('nature', 'Rock_Medium_1').traverse((o) => { if (o.isMesh && o.material.map && !m) m = o.material.map; }); return m; })();
-  const rock = rockMap.clone(); rock.wrapS = rock.wrapT = THREE.RepeatWrapping; rock.needsUpdate = true;
-  baked = { floor: bake(renderer, piece('hall', 'floor'), 512, false), wall: bake(renderer, piece('hall', 'wall'), 512, true), rock };
-  return baked;
-}
-
 // textures de pierre réalistes (générées par tools/gen_textures.py) : couleur + relief
 const stoneCache = {};
 const texL = new THREE.TextureLoader();
@@ -80,36 +52,13 @@ export function preloadStone() {
   })));
 }
 
-function materials(theme, T) {
-  if (DARK) { // réaliste et sombre : pierre avec relief, éclairée par les torches
-    const S = (name, color, o = {}) => new THREE.MeshStandardMaterial({ map: stoneTex(name + '_c'), normalMap: stoneTex(name + '_n', false), normalScale: new THREE.Vector2(1.4, 1.4), color, roughness: 0.88, metalness: 0, side: THREE.DoubleSide, vertexColors: true, ...o });
-    const cap = S('rubble', 0x8a8a8a);
-    if (theme === 'cave') return { floor: S('cave_floor', 0xd0d4e0), wall: S('cave_wall', 0xc8cce0), ceil: cap };
-    if (theme === 'ruins') return { floor: S('ruins_floor', 0xffffff), wall: S('ruins_wall', 0xffffff), ceil: cap };
-    return { floor: S('crypt_floor', 0xffffff), wall: S('crypt_wall', 0xffffff), ceil: cap };
-  }
-  if (ANIME) { // décor d'animé : aplats nets, dessus de roche uni (pas de texture chargée)
-    const M2 = (o) => toon(new THREE.MeshStandardMaterial({ roughness: 0.92, metalness: 0, side: THREE.DoubleSide, vertexColors: true, ...o }));
-    if (theme === 'cave') return { floor: M2({ map: T.floor, color: 0x6a6aa8 }), wall: M2({ map: T.rock, color: 0x9098d0 }), ceil: M2({ color: 0x34366a }) };
-    if (theme === 'ruins') return { floor: M2({ map: T.floor, color: 0xb8c4a0 }), wall: M2({ map: T.wall, color: 0xb0b89a }), ceil: M2({ map: T.rock, color: 0x5a7a48 }) };
-    return { floor: M2({ map: T.floor, color: 0xb0a8c0 }), wall: M2({ map: T.wall, color: 0xb8a8c0 }), ceil: M2({ map: T.rock, color: 0x6a5a8a }) };
-  }
-  const M = (o) => toon(new THREE.MeshStandardMaterial({ roughness: 0.92, metalness: 0, side: THREE.DoubleSide, vertexColors: true, ...o }));
-  if (theme === 'cave') return {
-    floor: M({ map: T.rock, color: 0x8a7a96 }),
-    wall: M({ map: T.rock, color: 0x7a6e94 }),
-    ceil: M({ map: T.rock, color: 0xa8a4c8 }),
-  };
-  if (theme === 'ruins') return {
-    floor: M({ map: T.floor, color: 0xa8b090 }),
-    wall: M({ map: T.wall, color: 0xb0b498 }),
-    ceil: M({ map: T.rock, color: 0x9cc870 }),
-  };
-  return {
-    floor: M({ map: T.floor, color: 0xc8b8b0 }),
-    wall: M({ map: T.wall, color: 0xc0b0b8 }),
-    ceil: M({ map: T.rock, color: 0xa8a0b8 }),
-  };
+// matériaux : pierre réaliste avec relief, éclairée par les torches
+function materials(theme) {
+  const S = (name, color) => new THREE.MeshStandardMaterial({ map: stoneTex(name + '_c'), normalMap: stoneTex(name + '_n', false), normalScale: new THREE.Vector2(1.4, 1.4), color, roughness: 0.88, metalness: 0, side: THREE.DoubleSide, vertexColors: true });
+  const cap = S('rubble', 0x8a8a8a);
+  if (theme === 'cave') return { floor: S('cave_floor', 0xd0d4e0), wall: S('cave_wall', 0xc8cce0), ceil: cap };
+  if (theme === 'ruins') return { floor: S('ruins_floor', 0xffffff), wall: S('ruins_wall', 0xffffff), ceil: cap };
+  return { floor: S('crypt_floor', 0xffffff), wall: S('crypt_wall', 0xffffff), ceil: cap };
 }
 
 // ---------------------------------------------------------------
@@ -134,7 +83,7 @@ function buildShell(L, group, mats) {
     for (let h = 0; h < q.length; h++) { const k = q[h], i = k % W, j = (k / W) | 0;
       for (const [di, dj] of [[1, 0], [-1, 0], [0, 1], [0, -1]]) { const ii = i + di, jj = j + dj; if (ii < 0 || jj < 0 || ii >= W || jj >= H) continue; const kk = jj * W + ii; if (dist[kk] > dist[k] + 1) { dist[kk] = dist[k] + 1; q.push(kk); } } } }
   const dAt = (x, z) => { const i = Math.floor(x), j = Math.floor(z); return (i >= 0 && j >= 0 && i < W && j < H) ? dist[j * W + i] : 0; };
-  const moss = DARK ? (theme === 'ruins' ? [0.85, 0.98, 0.8] : [0.92, 0.92, 0.95]) : theme === 'ruins' ? [0.75, 1.05, 0.7] : theme === 'cave' ? [0.8, 0.85, 1.15] : [1.08, 0.9, 0.95];
+  const moss = theme === 'ruins' ? [0.85, 0.98, 0.8] : [0.92, 0.92, 0.95];
   const colOf = (kind, v) => {
     const [x, y, z] = v, n = fbm(x * 0.13, z * 0.13, 7), m = fbm(x * 0.05 + 3, z * 0.05, 11);
     let k = 0.82 + 0.36 * n, t = Math.max(0, m - 0.5) * 2;
@@ -144,7 +93,7 @@ function buildShell(L, group, mats) {
     return [k * (1 + (moss[0] - 1) * t), k * (1 + (moss[1] - 1) * t), k * (1 + (moss[2] - 1) * t)];
   };
   const pushTri = (b, a, c, d, uvs) => { b.pos.push(...a, ...c, ...d); b.uv.push(...uvs); b.col.push(...colOf(b.kind, a), ...colOf(b.kind, c), ...colOf(b.kind, d)); };
-  const fuv = DARK ? (cave ? 0.2 : 0.3) : cave ? 0.25 : 0.5; // taille des dalles à l'écran
+  const fuv = cave ? 0.2 : 0.3; // taille des dalles à l'écran
   // hauteur du sol « prolongée » sous la roche (pour poser le dessus des murs)
   const T = new Float32Array(W * H).fill(-99);
   for (let k = 0; k < W * H; k++) if (grid[k] === 1) T[k] = height[k];
@@ -201,7 +150,7 @@ function buildShell(L, group, mats) {
       if ((ix - p1[0]) * dz - (iz - p1[1]) * dx > 0) { p1 = m2; p2 = m1; }
       const len = Math.hypot(p2[0] - p1[0], p2[1] - p1[1]);
       const ux = (p2[0] - p1[0]) / len, uz = (p2[1] - p1[1]) / len;
-      const ws = DARK ? (cave ? 0.25 : 0.36) : 0.5;
+      const ws = cave ? 0.25 : 0.36;
       const u1 = (p1[0] * ux + p1[1] * uz) * ws, u2 = u1 + len * ws;
       const b1 = hOf(...p1[2]) - 0.6, b2 = hOf(...p2[2]) - 0.6, t1 = hOf(...p1[2]) + WALL_H, t2 = hOf(...p2[2]) + WALL_H;
       const wb = bin(cx, cz, 'wall');
@@ -249,7 +198,7 @@ function buildShell(L, group, mats) {
     g.setAttribute('color', new THREE.Float32BufferAttribute(b.col, 3));
     g.computeVertexNormals(); g.computeBoundingSphere();
     const m = new THREE.Mesh(g, mats[b.kind]);
-    m.receiveShadow = DARK; // les personnages projettent leur ombre au sol
+    m.receiveShadow = true; // les personnages projettent leur ombre au sol
     group.add(m);
   }
   addCutout(mats.wall); addCutout(mats.ceil);
@@ -276,8 +225,7 @@ function rockSpike(down) {
 
 export function buildWorld(renderer, scene3, L) {
   const group = new THREE.Group();
-  const T = textures(renderer);
-  const mats = materials(L.theme, T);
+  const mats = materials(L.theme);
   buildShell(L, group, mats);
 
   // --- regroupement des objets par type et par morceau ---
@@ -340,16 +288,16 @@ export function buildWorld(renderer, scene3, L) {
     for (const it of items) { v.setFromMatrixPosition(it.M); const key = Math.floor(v.x / CHUNK) + ',' + Math.floor(v.z / CHUNK); (chunks.get(key) || chunks.set(key, []).get(key)).push(it); }
     let meshes = [];
     if (procedural[kind]) {
-      const m = toon(kind === 'crystal'
+      const m = (kind === 'crystal'
         ? new THREE.MeshStandardMaterial({ color: 0xffffff, emissive: 0xffffff, emissiveIntensity: 0.9, roughness: 0.2, metalness: 0.1, transparent: true, opacity: 0.88 })
-        : new THREE.MeshStandardMaterial({ map: T.rock, color: L.theme === 'cave' ? 0x7a6e94 : 0x8a8a7a, roughness: 0.95 }));
+        : new THREE.MeshStandardMaterial({ map: stoneTex('cave_wall_c'), normalMap: stoneTex('cave_wall_n', false), color: L.theme === 'cave' ? 0xb0b0c8 : 0xb0aca0, roughness: 0.92 }));
       meshes = [[procedural[kind], m, new THREE.Matrix4()]];
     } else {
       const src = SRC[kind] && SRC[kind](); if (!src) continue;
       src.updateMatrixWorld(true);
       src.traverse((o) => {
         if (!o.isMesh) return;
-        const m = toon(o.material.clone());
+        const m = o.material.clone();
         if (kind === 'mushglow') { m.emissive = new THREE.Color(0xb060ff); m.emissiveIntensity = 0.9; }
         if (kind === 'fire') { m.emissive = new THREE.Color(0xff6a1a); m.emissiveIntensity = 0.5; }
         if (L.theme === 'ruins' && /column|bricks|statue|pedestal/.test(kind)) m.color.multiply(new THREE.Color(0xc8d0b0));
@@ -437,7 +385,7 @@ export function buildWorld(renderer, scene3, L) {
       if (!l) { pl.intensity = 0; return; }
       pl.position.set(l.x, l.y, l.z); pl.color.setHex(l.col);
       const flick = l.kind === 'torch' || l.kind === 'fire' ? 0.85 + 0.15 * Math.sin(time * 11 + l.x * 3) * Math.sin(time * 7.7 + l.z) : l.kind === 'portal' ? 0.8 + 0.2 * Math.sin(time * 2) : 1;
-      pl.intensity = l.i * (ANIME ? 3 : 4.2) * flick; pl.distance = l.kind === 'portal' ? 18 : 15;
+      pl.intensity = l.i * 4.2 * flick; pl.distance = l.kind === 'portal' ? 18 : 15;
     });
   }
   function dispose() {

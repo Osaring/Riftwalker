@@ -166,4 +166,4 @@ h2.red { color: #ff5a4a; text-shadow: 0 0 20px rgba(255,60,40,.5); }
 
 /* style sombre : les bords de l'écran s'assombrissent (vignettage), comme dans Diablo */
 #vignette { position: fixed; inset: 0; pointer-events: none; display: none; background: radial-gradient(ellipse at 50% 52%, transparent 48%, rgba(0,0,0,.38) 75%, rgba(0,0,0,.75) 100%); }
-body.dark #vignette { display: block; }
+body.dark #vignette { display: block; } /* toujours actif */

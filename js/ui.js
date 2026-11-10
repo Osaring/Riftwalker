@@ -2,7 +2,6 @@
 // INTERFACE : HUD, chiffres de dégâts, mini-carte, écran Héros (équipement, compétences, marchand)
 // =====================================================================
 import * as THREE from 'three';
-import { ANIME, setStyle } from './style.js';
 import { $, R } from './util.js';
 import { SLOTS, SLOT_NAME, RARITY, STAT_NAME, WEAPONS, itemScore, makeItem, rollRarity, looksOf } from './items.js';
 import { Character, HERO_H } from './character.js';
@@ -77,9 +76,6 @@ export function setup(game, handlers) {
   sb.onclick = () => { unlock(); settings.sound = !settings.sound; G.save.sound = settings.sound; applyVolumes(); lab(); H.saveGame(); SFX.ui(); };
   mb.onclick = () => { unlock(); settings.music = !settings.music; G.save.music = settings.music; applyVolumes(); lab(); H.saveGame(); };
   lab();
-  // style graphique : animé japonais ou classique (recharge le jeu pour tout reconstruire)
-  $('styleBtn').textContent = 'Style : ' + (ANIME ? 'Animé' : 'Sombre');
-  $('styleBtn').onclick = () => { SFX.ui(); setStyle(ANIME ? 'dark' : 'anime'); };
   document.querySelectorAll('.tabs button').forEach((b) => b.onclick = () => { SFX.ui(); tab(b.dataset.tab); });
 }
 export function show(id) {
