@@ -78,8 +78,8 @@ export function setup(game, handlers) {
   mb.onclick = () => { unlock(); settings.music = !settings.music; G.save.music = settings.music; applyVolumes(); lab(); H.saveGame(); };
   lab();
   // style graphique : animé japonais ou classique (recharge le jeu pour tout reconstruire)
-  $('styleBtn').textContent = 'Style : ' + (ANIME ? 'Animé' : 'Classique');
-  $('styleBtn').onclick = () => { SFX.ui(); setStyle(ANIME ? 'classic' : 'anime'); };
+  $('styleBtn').textContent = 'Style : ' + (ANIME ? 'Animé' : 'Wild Rift');
+  $('styleBtn').onclick = () => { SFX.ui(); setStyle(ANIME ? 'rift' : 'anime'); };
   document.querySelectorAll('.tabs button').forEach((b) => b.onclick = () => { SFX.ui(); tab(b.dataset.tab); });
 }
 export function show(id) {
@@ -140,15 +140,30 @@ export function updateHUD(g, P, camera) {
   if (ovDirty) clearOverlay();
   ovDirty = false;
   const c = oc, W = ov.width, Hh = ov.height;
+  // barres de vie au-dessus des têtes, façon Wild Rift : petite case de niveau + barre découpée en tranches
+  const wrBar = (x, y, f, col, lvl, w, h, tick) => {
+    ovDirty = true;
+    const bx = x - w / 2 + 9 * k;
+    c.fillStyle = 'rgba(8,10,16,.82)'; rr(c, x - w / 2 - 9 * k, y - 1.5 * k, w + 18 * k - 9 * k + 2 * k, h + 3 * k, 2 * k); c.fill();
+    c.fillStyle = '#2a2f3a'; c.fillRect(bx, y, w - 9 * k, h);
+    c.fillStyle = col; c.fillRect(bx, y, (w - 9 * k) * Math.max(0, f), h);
+    c.fillStyle = 'rgba(255,255,255,.22)'; c.fillRect(bx, y, (w - 9 * k) * Math.max(0, f), h * 0.35);
+    if (tick > 0) { c.fillStyle = 'rgba(0,0,0,.55)'; for (let t = tick; t < 1; t += tick) c.fillRect(bx + (w - 9 * k) * t, y, Math.max(1, k * 0.8), h); }
+    c.fillStyle = '#10131c'; rr(c, x - w / 2 - 9 * k, y - 4 * k, 16 * k, h + 8 * k, 3 * k); c.fill();
+    c.strokeStyle = 'rgba(232,196,122,.8)'; c.lineWidth = k; c.stroke();
+    c.font = `900 ${9 * k}px Nunito`; c.fillStyle = '#fff'; c.textAlign = 'center'; c.fillText(lvl, x - w / 2 - k, y + h / 2 + 3.2 * k);
+  };
   for (const e of g.enemies) {
     if (e.dead || (!e.aggro && e.hp >= e.maxHp)) continue;
     const [x, y, ok] = proj(camera, e.x, e.y + e.T.height * 1.35 + 0.3, e.z);
     if (!ok || x < 0 || x > W || y < 0 || y > Hh) continue;
-    const dd = Math.hypot(e.x - P.x, e.z - P.z); if (dd > 22) continue;
-    const bw = (e.T.boss ? 90 : 50) * k, bh = 6 * k; ovDirty = true;
-    c.fillStyle = 'rgba(0,0,0,.6)'; rr(c, x - bw / 2 - k, y - k, bw + 2 * k, bh + 2 * k, 3 * k); c.fill();
-    c.fillStyle = e.T.boss ? '#ff8a20' : e === g.target ? '#ff3a2a' : '#c82a2a'; rr(c, x - bw / 2, y, Math.max(bh, bw * e.hp / e.maxHp), bh, 3 * k); c.fill();
-    if (e.stun > 0) { c.fillStyle = '#ffe58a'; c.font = `900 ${12 * k}px Nunito`; c.textAlign = 'center'; c.fillText('✦ ✦', x, y - 6 * k); }
+    const dd = Math.hypot(e.x - P.x, e.z - P.z); if (dd > 24) continue;
+    wrBar(x, y, e.hp / e.maxHp, e.T.boss ? '#ff8a20' : e === g.target ? '#ff3a2a' : '#d02c2c', S.floor + (e.T.boss ? 2 : 0), (e.T.boss ? 100 : 62) * k, 7 * k, e.maxHp > 200 ? 100 / e.maxHp : 0);
+    if (e.stun > 0) { c.fillStyle = '#ffe58a'; c.font = `900 ${12 * k}px Nunito`; c.textAlign = 'center'; c.fillText('✦ ✦', x, y - 8 * k); }
+  }
+  if (P.hp > 0) { // la barre du héros, au-dessus de sa tête (verte, découpée tous les 100 PV)
+    const [x, y, ok] = proj(camera, P.x, P.y + 2.75, P.z);
+    if (ok) wrBar(x, y, P.hp / st.maxHp, '#46d36a', S.level, 70 * k, 8 * k, 100 / st.maxHp);
   }
   // chiffres de dégâts
   c.textAlign = 'center'; c.lineJoin = 'round';

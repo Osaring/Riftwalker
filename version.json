@@ -1,4 +1,4 @@
 {
-  "version": "3.1.0",
-  "notes": "Style animé japonais (cel-shading et contours) — bouton Style sur l'écran titre pour revenir au classique"
+  "version": "3.2.0",
+  "notes": "Vue et rendu façon Wild Rift : caméra plus haute, lumière de jour, barres de vie au-dessus des têtes, boutons en arc"
 }

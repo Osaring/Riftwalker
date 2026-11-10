@@ -72,17 +72,17 @@ function materials(theme, T) {
   if (theme === 'cave') return {
     floor: M({ map: T.rock, color: 0x8a7a96 }),
     wall: M({ map: T.rock, color: 0x7a6e94 }),
-    ceil: M({ map: T.rock, color: 0x8a7aae }),
+    ceil: M({ map: T.rock, color: 0xa8a4c8 }),
   };
   if (theme === 'ruins') return {
     floor: M({ map: T.floor, color: 0xa8b090 }),
     wall: M({ map: T.wall, color: 0xb0b498 }),
-    ceil: M({ map: T.rock, color: 0x9aae78 }),
+    ceil: M({ map: T.rock, color: 0x9cc870 }),
   };
   return {
     floor: M({ map: T.floor, color: 0xc8b8b0 }),
     wall: M({ map: T.wall, color: 0xc0b0b8 }),
-    ceil: M({ map: T.rock, color: 0x9a8a98 }),
+    ceil: M({ map: T.rock, color: 0xa8a0b8 }),
   };
 }
 
@@ -409,7 +409,7 @@ export function buildWorld(renderer, scene3, L) {
       if (!l) { pl.intensity = 0; return; }
       pl.position.set(l.x, l.y, l.z); pl.color.setHex(l.col);
       const flick = l.kind === 'torch' || l.kind === 'fire' ? 0.85 + 0.15 * Math.sin(time * 11 + l.x * 3) * Math.sin(time * 7.7 + l.z) : l.kind === 'portal' ? 0.8 + 0.2 * Math.sin(time * 2) : 1;
-      pl.intensity = l.i * (ANIME ? 3 : 4.5) * flick; pl.distance = l.kind === 'portal' ? 18 : 15;
+      pl.intensity = l.i * (ANIME ? 3 : 1.8) * flick; pl.distance = l.kind === 'portal' ? 18 : 15;
     });
   }
   function dispose() {

@@ -14,7 +14,7 @@ import * as UI from './ui.js';
 import { ANIME, toon } from './style.js';
 import { R, clamp, lerp, damp, angWrap, angDiff, store, $ } from './util.js';
 
-export const APP_VERSION = '3.1.0';
+export const APP_VERSION = '3.2.0';
 
 // ---------------------------------------------------------------
 // MOTEUR 3D
@@ -28,13 +28,14 @@ const res = { max: Math.min(DPR, 1.6), min: Math.min(DPR, 0.85), cur: Math.min(D
 renderer.setPixelRatio(res.cur);
 renderer.outputColorSpace = THREE.SRGBColorSpace;
 // style animé : rendu « neutre » qui garde les couleurs franches (le rendu « film » les ternit)
-renderer.toneMapping = ANIME ? THREE.NeutralToneMapping : THREE.ACESFilmicToneMapping;
-renderer.toneMappingExposure = ANIME ? 1.05 : 1.25;
+renderer.toneMapping = THREE.NeutralToneMapping;
+renderer.toneMappingExposure = ANIME ? 1.05 : 1.2;
 const scene3 = new THREE.Scene();
 scene3.fog = new THREE.Fog(0x120c1c, 10, 42);
 const hemi = new THREE.HemisphereLight(0x8a90ff, 0x3a2030, 1.2); scene3.add(hemi);
 // lumière principale venue d'en haut à gauche, comme le « soleil » peint des cartes de LoL
-const moon = new THREE.DirectionalLight(0xffe2c0, 1.25); moon.position.set(-0.5, 1, -0.35); scene3.add(moon);
+// style Wild Rift : un vrai « soleil » doré éclaire tout le donjon par le dessus
+const moon = new THREE.DirectionalLight(0xffe6c4, ANIME ? 1.25 : 3.2); moon.position.set(-0.5, 1, -0.35); scene3.add(moon);
 const camera = new THREE.PerspectiveCamera(40, 1, 0.5, 70);
 const heroLight = new THREE.PointLight(0xffd8a8, 14, 11, 1.2); scene3.add(heroLight); // lumière douce autour du héros (lisibilité)
 const THEME_LOOK = ANIME ? {
@@ -42,6 +43,10 @@ const THEME_LOOK = ANIME ? {
   cave: { fog: 0x081028, hemi: [0x88d0ff, 0x503a78, 1.9], name: 'Les Grottes de cristal' },
   ruins: { fog: 0x0a1a10, hemi: [0xd0f8c8, 0x4a4a30, 1.85], name: 'Les Ruines englouties' },
 } : {
+  crypt: { fog: 0x2a2840, hemi: [0xd8dcff, 0x6a5a6a, 2.3], name: 'La Crypte' },
+  cave: { fog: 0x18284a, hemi: [0xb8e4ff, 0x5a5a8a, 2.4], name: 'Les Grottes de cristal' },
+  ruins: { fog: 0x24382a, hemi: [0xeeffe4, 0x6a6a48, 2.3], name: 'Les Ruines englouties' },
+}; const _OLD_LOOK = {
   crypt: { fog: 0x140e1e, hemi: [0xb0a8ff, 0x5a3a48, 1.6], name: 'La Crypte' },
   cave: { fog: 0x0a1224, hemi: [0x8ac8ff, 0x483060, 1.7], name: 'Les Grottes de cristal' },
   ruins: { fog: 0x0e1a12, hemi: [0xc8f0c0, 0x4a4028, 1.65], name: 'Les Ruines englouties' },
@@ -115,7 +120,7 @@ function buildHero() {
   if (P.ch) P.ch.dispose();
   P.ch = new Character({ height: HERO_H, hair: ['Hair_SimpleParted', 'Hair_Beard', 'Eyebrows_Regular'] });
   // cercle doré sous le héros (repère visuel comme sous les champions de LoL)
-  const ring = new THREE.Mesh(new THREE.RingGeometry(0.62, 0.72, 40), new THREE.MeshBasicMaterial({ color: 0xffd36a, transparent: true, opacity: 0.75, depthWrite: false, blending: THREE.AdditiveBlending }));
+  const ring = new THREE.Mesh(new THREE.RingGeometry(0.62, 0.72, 40), new THREE.MeshBasicMaterial({ color: ANIME ? 0xffd36a : 0x5cf0b0, transparent: true, opacity: 0.75, depthWrite: false, blending: THREE.AdditiveBlending }));
   ring.rotation.x = -Math.PI / 2; ring.position.y = 0.04; ring.renderOrder = 2; P.ch.group.add(ring);
   P.ch.setLooks(looksOf(G.save.equip));
   scene3.add(P.ch.group);
@@ -891,12 +896,12 @@ let camInit = false;
 // Caméra « vue LoL » : haute, inclinée à ~56°, orientation fixe (le haut de l'écran = le nord),
 // elle suit le héros en douceur et anticipe un peu dans la direction où il court.
 const cam = { fx: 0, fy: 0, fz: 0, lx: 0, lz: 0, shakeT: 0 };
-const CAM_PITCH = 0.98;
+const CAM_PITCH = 0.96; // ~55°, l'angle de Wild Rift
 const hv = new THREE.Vector3();
 function updateCamera(dt) {
   input.camDX = input.camDY = 0; // plus de rotation de caméra
   const portrait = camera.aspect < 1;
-  const D = portrait ? 17 : 12.5;
+  const D = portrait ? 18 : 14;
   // anticipation : on décale un peu le cadre vers là où va le héros
   const leadX = P.moving ? Math.sin(P.face) * 1.6 : 0, leadZ = P.moving ? Math.cos(P.face) * 1.6 : 0;
   const kl = 1 - Math.exp(-dt * 2.5);

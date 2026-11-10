@@ -18,7 +18,7 @@ canvas.ico { width: 100%; height: 100%; display: block; pointer-events: none; }
 #hud { position: fixed; inset: 0; z-index: 5; pointer-events: none; }
 #stickZone { position: absolute; left: 0; top: 0; bottom: 0; width: 45%; pointer-events: auto; touch-action: none; }
 #camZone { display: none; }
-#stickBase { position: absolute; width: 112px; height: 112px; margin: -56px 0 0 -56px; border-radius: 50%; border: 2px solid rgba(255,255,255,.22); background: radial-gradient(rgba(255,255,255,.08), rgba(255,255,255,.02)); opacity: 0; transition: opacity .15s; pointer-events: none; left: 22%; top: 70%; }
+#stickBase { position: absolute; width: 112px; height: 112px; margin: -56px 0 0 -56px; border-radius: 50%; border: 2px solid rgba(255,255,255,.22); background: radial-gradient(rgba(255,255,255,.08), rgba(255,255,255,.02)); opacity: .5; transition: opacity .15s; pointer-events: none; left: calc(70px + var(--sal, 0px)); bottom: auto; top: calc(100% - 82px - var(--sab, 0px)); }
 #stickBase.on { opacity: 1; }
 #stickKnob { position: absolute; left: 50%; top: 50%; width: 48px; height: 48px; border-radius: 50%; background: rgba(255,255,255,.6); box-shadow: 0 2px 10px rgba(0,0,0,.4); transform: translate(-50%,-50%); }
 
@@ -47,16 +47,17 @@ canvas.ico { width: 100%; height: 100%; display: block; pointer-events: none; }
 @keyframes lootIn { from { opacity: 0; transform: translateX(-12px); } }
 @keyframes lootOut { to { opacity: 0; transform: translateY(-6px); } }
 
-#actions { position: absolute; right: calc(10px + var(--sar)); bottom: calc(14px + var(--sab)); width: 230px; height: 220px; pointer-events: none; }
+#actions { position: absolute; right: calc(10px + var(--sar)); bottom: calc(12px + var(--sab)); width: 240px; height: 210px; pointer-events: none; }
 .act { position: absolute; pointer-events: auto; touch-action: none; width: 60px; height: 60px; border-radius: 50%; padding: 9px;
   background: radial-gradient(circle at 50% 30%, rgba(60,46,96,.92), rgba(14,10,26,.94)); box-shadow: 0 0 0 2px var(--line), 0 3px 10px rgba(0,0,0,.6); transition: transform .07s; overflow: hidden; }
 .act.pressed { transform: scale(.9); }
 .act.big { width: 88px; height: 88px; right: 0; bottom: 0; padding: 14px; box-shadow: 0 0 0 2.5px var(--gold), 0 0 16px rgba(232,196,122,.25), 0 3px 12px rgba(0,0,0,.6); }
-#btnSkill1 { right: 96px; bottom: 0; }
-#btnSkill2 { right: 86px; bottom: 74px; }
-#btnSkill3 { right: 18px; bottom: 98px; }
-#btnRoll { right: 162px; bottom: 50px; box-shadow: 0 0 0 2px rgba(140,255,180,.45), 0 3px 10px rgba(0,0,0,.6); }
-#btnPotion { right: 150px; bottom: 120px; }
+/* disposition « Wild Rift » : les compétences en arc de cercle autour du gros bouton d'attaque */
+#btnSkill1 { right: 106px; bottom: 6px; }
+#btnSkill2 { right: 86px; bottom: 80px; }
+#btnSkill3 { right: 18px; bottom: 104px; }
+#btnRoll { right: 176px; bottom: 6px; box-shadow: 0 0 0 2px rgba(140,255,180,.45), 0 3px 10px rgba(0,0,0,.6); }
+#btnPotion { right: 158px; bottom: 76px; }
 .act.small { width: 50px; height: 50px; padding: 8px; }
 .act .cd { position: absolute; inset: 0; border-radius: 50%; display: grid; place-items: center; font-size: 15px; font-weight: 900; color: #fff; text-shadow: 0 1px 3px #000; pointer-events: none; }
 .act .cost, .act .count, .act .lock { position: absolute; bottom: 2px; left: 0; right: 0; text-align: center; font-style: normal; font-size: 10px; font-weight: 900; color: #ffb0a0; text-shadow: 0 1px 2px #000; pointer-events: none; }

@@ -26,7 +26,8 @@ export function setupInput(onAnyTouch) {
     input.mx = dx / R; input.my = -dy / R;
     knob.style.transform = `translate(calc(-50% + ${dx}px), calc(-50% + ${dy}px))`;
   });
-  const stickEnd = (e) => { if (e.pointerId !== sid) return; sid = null; input.mx = input.my = 0; base.classList.remove('on'); input.stickActive = false; };
+  const stickEnd = (e) => { if (e.pointerId !== sid) return; sid = null; input.mx = input.my = 0; base.classList.remove('on'); input.stickActive = false;
+    base.style.left = base.style.top = ''; knob.style.transform = 'translate(-50%,-50%)'; }; // le joystick revient à sa place
   stickZone.addEventListener('pointerup', stickEnd); stickZone.addEventListener('pointercancel', stickEnd);
 
   // caméra : glisser n'importe où sur la droite (hors boutons)
