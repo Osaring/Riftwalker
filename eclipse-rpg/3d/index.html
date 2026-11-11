@@ -1,8 +1,8 @@
-<!doctype html><html lang="fr"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1,maximum-scale=1,user-scalable=no,viewport-fit=cover"><meta name="theme-color" content="#101421"><title>ECLIPSE 3D 0.2 — Vue paysage</title><style>
+<!doctype html><html lang="fr"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1,maximum-scale=1,user-scalable=no,viewport-fit=cover"><meta name="theme-color" content="#101421"><title>ECLIPSE 3D 0.3 — Les Ruines</title><meta name="apple-mobile-web-app-capable" content="yes"><meta name="apple-mobile-web-app-status-bar-style" content="black-translucent"><meta name="apple-mobile-web-app-title" content="ECLIPSE 3D"><meta name="mobile-web-app-capable" content="yes"><link rel="manifest" href="./manifest.webmanifest"><link rel="icon" type="image/svg+xml" href="./icon.svg"><style>
 *{box-sizing:border-box}html,body{margin:0;width:100%;height:100%;overflow:hidden;background:#101421;color:#fff;font-family:system-ui,-apple-system,sans-serif;touch-action:none}canvas{display:block}#hud{position:absolute;top:max(12px,env(safe-area-inset-top));left:12px;right:12px;pointer-events:none;display:flex;justify-content:space-between;gap:10px;font-size:13px;text-shadow:0 2px 6px #000}#hud>div{background:#101827b8;border:1px solid #7e94ae55;border-radius:13px;padding:10px 12px}#hp{height:8px;background:#382b36;border-radius:8px;overflow:hidden;margin-top:6px;width:140px}#hp i{display:block;background:linear-gradient(90deg,#dd4268,#ff9a87);height:100%;width:100%}#toplink{position:absolute;top:calc(max(12px,env(safe-area-inset-top)) + 75px);left:12px;color:#c7e7f7;text-decoration:none;font-size:12px;background:#111b2bd9;padding:9px;border-radius:10px}#stick{position:absolute;bottom:calc(32px + env(safe-area-inset-bottom));left:22px;width:136px;height:136px;border-radius:50%;background:#9fc6d11c;border:2px solid #b3d9e46b;touch-action:none}#knob{position:absolute;width:59px;height:59px;border-radius:50%;left:37px;top:37px;background:#a8e5f9a8;box-shadow:0 0 20px #7cd8f777}#buttons{position:absolute;right:16px;bottom:calc(35px + env(safe-area-inset-bottom));display:flex;align-items:end;gap:10px}button{color:white;border:1px solid #c0ddff88;background:linear-gradient(145deg,#3b5475,#17243b);border-radius:50%;width:62px;height:62px;font-size:23px;touch-action:none}#attack{width:84px;height:84px;background:linear-gradient(145deg,#9d5979,#392842);font-size:28px}#menu{position:absolute;inset:0;background:linear-gradient(145deg,#0d1321e8,#202343e9);display:grid;place-items:center;text-align:center;padding:28px}#menu section{max-width:360px}h1{font-size:44px;letter-spacing:5px;margin:0;color:#e3e6ff}#menu p{line-height:1.5;color:#c3d3e5}#menu button{width:auto;height:auto;border-radius:14px;padding:15px 24px;font-size:16px;font-weight:700}#msg{position:absolute;top:25%;width:100%;text-align:center;pointer-events:none;font-weight:800;text-shadow:0 2px 9px #000}#badge{font-size:11px;letter-spacing:1px;color:#9bdcf8}
 /* ECLIPSE 3D 0.2 landscape combat HUD */
 #hud,#stick,#buttons,#toplink{z-index:5}
-#menu{z-index:12}
+#menu{z-index:12}#toplink{transition:opacity .2s}#toplink:focus,#toplink:hover{opacity:1}
 #rotateNotice{display:none;position:fixed;inset:0;z-index:30;background:radial-gradient(circle at center,#25324e 0%,#0c1422 78%);padding:28px;text-align:center;place-items:center}
 #rotateNotice section{max-width:320px}
 #rotateNotice strong{display:block;font-size:23px;margin:12px 0}
@@ -11,14 +11,14 @@
 @media(orientation:portrait){#rotateNotice{display:grid}#menu,#stick,#buttons,#hud,#toplink,#msg{visibility:hidden}}
 @media(orientation:landscape){
 #hud{top:max(8px,env(safe-area-inset-top));left:max(16px,env(safe-area-inset-left));right:max(16px,env(safe-area-inset-right));font-size:12px}
-#hud>div{padding:7px 11px;border-radius:10px}
-#hp{width:130px;height:7px;margin-top:5px}
-#toplink{top:calc(max(8px,env(safe-area-inset-top)) + 72px);left:max(16px,env(safe-area-inset-left));font-size:11px;padding:7px 9px}
-#stick{width:112px;height:112px;left:max(20px,env(safe-area-inset-left));bottom:max(15px,env(safe-area-inset-bottom))}
-#knob{width:49px;height:49px;left:29.5px;top:29.5px}
+#hud>div{padding:5px 9px;border-radius:9px;background:#101827a3;border-color:#8aa2b333}
+#hp{width:116px;height:6px;margin-top:4px}
+#toplink{top:calc(max(8px,env(safe-area-inset-top)) + 54px);left:max(16px,env(safe-area-inset-left));font-size:10px;padding:5px 7px;opacity:.7}
+#stick{width:103px;height:103px;left:max(22px,env(safe-area-inset-left));bottom:max(16px,env(safe-area-inset-bottom));background:#9fc6d114}
+#knob{width:44px;height:44px;left:27.5px;top:27.5px}
 #buttons{right:max(22px,env(safe-area-inset-right));bottom:max(17px,env(safe-area-inset-bottom));gap:10px}
-#buttons button{width:54px;height:54px;font-size:21px}
-#buttons #attack{width:79px;height:79px;font-size:29px}
+#buttons button{width:51px;height:51px;font-size:21px}
+#buttons #attack{width:73px;height:73px;font-size:28px}
 #menu section{max-width:500px}
 #menu h1{font-size:clamp(28px,6vh,43px)}
 #menu p{font-size:13px;margin:10px 0}
@@ -31,10 +31,10 @@
 #buttons #attack{width:64px;height:64px}
 #menu p{font-size:11px;margin:5px 0}
 }
-</style></head><body><div id="hud"><div><b>ECLIPSE <span id="badge">3D 0.2 · PAYSAGE</span></b><div id="hp"><i id="hpfill"></i></div><div id="status">Vague 1 · 0 élimination</div></div><div>⚔ <span id="kills">0</span> · ♥ <span id="health">100</span></div></div><a id="toplink" href="../">← Version 2D préservée</a><div id="msg"></div><div id="stick"><div id="knob"></div></div><div id="buttons"><button id="dodge" aria-label="Esquive">↝</button><button id="skill" aria-label="Pouvoir">✦</button><button id="attack" aria-label="Attaque">⚔</button></div><div id="menu"><section><h1>ECLIPSE</h1><p>RENAISSANCE 3D<br>Vue large inspirée des MOBA mobiles : combats 3D isométriques, déplacements précis et vagues d'ennemis.</p><button id="play">▶ Entrer dans l'arène</button><p style="font-size:12px">Prototype indépendant : ta sauvegarde 2D reste intacte. Connexion requise pour charger Three.js.</p></section></div><div id="rotateNotice" role="status"><section><span class="phone" aria-hidden="true">📱</span><strong>Tourne ton iPhone</strong><p>ECLIPSE 3D se joue désormais en <b>mode paysage</b>, avec la vue large et les commandes de ta référence Wild Rift.</p><p>Si l'écran ne pivote pas, désactive le verrouillage de l'orientation dans le Centre de contrôle.</p></section></div><script type="module">
+</style></head><body><div id="hud"><div><b>ECLIPSE <span id="badge">3D 0.3 · RUINES</span></b><div id="hp"><i id="hpfill"></i></div><div id="status">Vague 1 · 0 élimination</div></div><div>⚔ <span id="kills">0</span> · ♥ <span id="health">100</span></div></div><a id="toplink" href="../">← Version 2D préservée</a><div id="msg"></div><div id="stick"><div id="knob"></div></div><div id="buttons"><button id="dodge" aria-label="Esquive">↝</button><button id="skill" aria-label="Pouvoir">✦</button><button id="attack" aria-label="Attaque">⚔</button></div><div id="menu"><section><h1>ECLIPSE</h1><p>RENAISSANCE 3D<br>Les Ruines de l’Éclipse : caméra rapprochée, donjon sculpté et combats en paysage.</p><button id="play">▶ Entrer dans l'arène</button><p style="font-size:12px">Prototype indépendant : ta sauvegarde 2D reste intacte. Pour jouer sans les barres Safari, ajoute cette page à l’écran d’accueil.</p></section></div><div id="rotateNotice" role="status"><section><span class="phone" aria-hidden="true">📱</span><strong>Tourne ton iPhone</strong><p>ECLIPSE 3D se joue désormais en <b>mode paysage</b>, avec la vue large et les commandes de ta référence Wild Rift.</p><p>Si l'écran ne pivote pas, désactive le verrouillage de l'orientation dans le Centre de contrôle.</p></section></div><script type="module">
 import * as THREE from 'https://cdn.jsdelivr.net/npm/three@0.170.0/build/three.module.js';
 const scene=new THREE.Scene();scene.background=new THREE.Color(0x0b1220);scene.fog=new THREE.FogExp2(0x101b2c,.012);
-const CAMERA_HEIGHT=29;const halfH=CAMERA_HEIGHT/2;const halfW=halfH*innerWidth/innerHeight;const camera=new THREE.OrthographicCamera(-halfW,halfW,halfH,-halfH,.1,300);const cameraOffset=new THREE.Vector3(18,34,18),cameraFocus=new THREE.Vector3(-3,0,-3);camera.position.copy(cameraFocus).add(cameraOffset);camera.lookAt(cameraFocus);const renderer=new THREE.WebGLRenderer({antialias:true,powerPreference:'high-performance'});renderer.setPixelRatio(Math.min(devicePixelRatio,1.6));renderer.setSize(innerWidth,innerHeight);renderer.shadowMap.enabled=true;renderer.shadowMap.type=THREE.PCFSoftShadowMap;renderer.outputColorSpace=THREE.SRGBColorSpace;document.body.prepend(renderer.domElement);
+const CAMERA_HEIGHT=25.5;const halfH=CAMERA_HEIGHT/2;const halfW=halfH*innerWidth/innerHeight;const camera=new THREE.OrthographicCamera(-halfW,halfW,halfH,-halfH,.1,300);const cameraOffset=new THREE.Vector3(18,34,18),cameraFocus=new THREE.Vector3(-3,0,-3);camera.position.copy(cameraFocus).add(cameraOffset);camera.lookAt(cameraFocus);const renderer=new THREE.WebGLRenderer({antialias:true,powerPreference:'high-performance'});renderer.setPixelRatio(Math.min(devicePixelRatio,1.6));renderer.setSize(innerWidth,innerHeight);renderer.shadowMap.enabled=true;renderer.shadowMap.type=THREE.PCFSoftShadowMap;renderer.outputColorSpace=THREE.SRGBColorSpace;document.body.prepend(renderer.domElement);
 scene.add(new THREE.HemisphereLight(0x9dc8ff,0x273127,2.0));const sun=new THREE.DirectionalLight(0xd6e6ff,3);sun.position.set(-8,18,12);sun.castShadow=true;sun.shadow.mapSize.set(1024,1024);sun.shadow.camera.left=-24;sun.shadow.camera.right=24;sun.shadow.camera.top=24;sun.shadow.camera.bottom=-24;scene.add(sun);
 const mat=(c,rough=.75,emissive=0)=>new THREE.MeshStandardMaterial({color:c,roughness:rough,metalness:.15,emissive,emissiveIntensity:emissive?.5:0});
 const stone=mat(0x293b48),floor=mat(0x243641),edge=mat(0x475b66),violet=mat(0x9066db,.35,0x45236e),cyan=mat(0x64dff0,.28,0x1c7f95),gold=mat(0xffc878,.45,0x885015),enemyMat=mat(0xa54f79,.55,0x4c1438),skin=mat(0xc6a38e),dark=mat(0x1d2737);
@@ -42,7 +42,30 @@ function mesh(geo,material,parent=scene){let o=new THREE.Mesh(geo,material);o.ca
 let ground=mesh(new THREE.PlaneGeometry(55,55),floor);ground.rotation.x=-Math.PI/2;ground.receiveShadow=true;ground.castShadow=false;
 for(let x=-24;x<=24;x+=4)for(let z=-24;z<=24;z+=4){let tile=mesh(new THREE.BoxGeometry(3.92,.22,3.92),((x+z)%8===0)?stone:floor);tile.position.set(x,-.12,z);tile.castShadow=false}
 for(let i=-25;i<=25;i+=5){for(let axis of [-1,1]){let a=mesh(new THREE.BoxGeometry(2.5,3,2.5),stone);a.position.set(i,1.2,axis*27);let b=mesh(new THREE.BoxGeometry(2.5,3,2.5),stone);b.position.set(axis*27,1.2,i)}}
-for(let i=0;i<16;i++){let a=i*Math.PI*2/16,r=20+Math.sin(i*9)*3;let crystal=mesh(new THREE.OctahedronGeometry(.8+Math.random()*.5),i%2?cyan:violet);crystal.position.set(Math.cos(a)*r,1.4,Math.sin(a)*r);crystal.rotation.z=.3;let light=new THREE.PointLight(i%2?0x44b7e6:0xa060ef,8,8);light.position.copy(crystal.position);scene.add(light)}
+for(let i=0;i<12;i++){let a=i*Math.PI*2/12,r=20+Math.sin(i*9)*3;let crystal=mesh(new THREE.OctahedronGeometry(.8+Math.random()*.5),i%2?cyan:violet);crystal.position.set(Math.cos(a)*r,1.4,Math.sin(a)*r);crystal.rotation.z=.3;if(i%2===0){let light=new THREE.PointLight(0xa060ef,7,7);light.position.copy(crystal.position);scene.add(light)}}
+// Perimeter ruins: keep obstacles out of the central combat zone.
+const weathered=mat(0x526170),moss=mat(0x38594f),ember=mat(0xffab50,.25,0xff5d1d);
+const ruinGroup=new THREE.Group();scene.add(ruinGroup);
+const blockGeo=new THREE.BoxGeometry(1,1,1);
+function ruinBlock(x,y,z,sx,sy,sz,material=weathered,tilt=0){const a=mesh(blockGeo,material,ruinGroup);a.position.set(x,y,z);a.scale.set(sx,sy,sz);a.rotation.y=tilt;return a}
+for(const [x,z] of [[-20,-20],[20,-20],[-20,20],[20,20]]){
+ruinBlock(x,.25,z,4,.5,4,stone);ruinBlock(x,.92,z,2.6,.4,2.6,edge);
+ruinBlock(x,2.45,z,1.55,2.9,1.55);ruinBlock(x,4.03,z,2,.45,2,stone);
+ruinBlock(x,4.4,z,2.35,.25,2.35,edge);ruinBlock(x+2,.38,z+1.1,1.8,.55,.9,moss,.18);
+const flame=mesh(new THREE.ConeGeometry(.32,.9,7),ember,ruinGroup);flame.position.set(x,5.06,z)}
+for(const side of [-1,1]){
+const z=side*25;ruinBlock(-5,2.5,z,1.5,5,1.9);ruinBlock(5,2.15,z,1.6,4.3,1.9);
+ruinBlock(-2.9,5.3,z,2.8,.8,1.9,edge,.08);ruinBlock(2.5,4.7,z,2.8,.7,1.9,weathered,-.12);
+ruinBlock(0,.27,z,12,.55,3,stone);
+const torchLight=new THREE.PointLight(0xff9658,5,11);torchLight.position.set(0,2.8,z-side*2);scene.add(torchLight);
+const torch=mesh(new THREE.OctahedronGeometry(.42),ember,ruinGroup);torch.position.copy(torchLight.position)}
+for(const x of [-15,15])for(const z of [-12,12]){
+ruinBlock(x,.24,z,3.5,.48,3.5,stone);ruinBlock(x+.5,.82,z-.3,2.7,.6,1.3,weathered,.22);
+const broken=ruinBlock(x-1,1.2,z+.7,.8,2.1,.8,edge,.35);broken.rotation.z=.17}
+for(let i=0;i<8;i++){
+const a=i*Math.PI/4,r=10.8;
+const rune=mesh(new THREE.TorusGeometry(.58,.07,6,28),i%2?cyan:violet,ruinGroup);
+rune.rotation.x=Math.PI/2;rune.position.set(Math.cos(a)*r,.13,Math.sin(a)*r);rune.castShadow=false}
 function actor(color,isHero=false){let group=new THREE.Group();scene.add(group);let legs=mesh(new THREE.CylinderGeometry(.34,.48,1.05,7),dark,group);legs.position.y=.65;let torso=mesh(new THREE.CylinderGeometry(.52,.7,1.25,7),color,group);torso.position.y=1.58;let head=mesh(new THREE.SphereGeometry(.4,10,8),skin,group);head.position.y=2.43;let helm=mesh(new THREE.ConeGeometry(.48,.48,6),isHero?gold:dark,group);helm.position.y=2.84;let arm=mesh(new THREE.BoxGeometry(.32,1,.32),color,group);arm.position.set(-.68,1.55,0);let arm2=mesh(new THREE.BoxGeometry(.32,1,.32),color,group);arm2.position.set(.68,1.55,0);let weapon=mesh(new THREE.BoxGeometry(.14,1.6,.24),isHero?cyan:enemyMat,group);weapon.position.set(.92,1.25,.28);let halo=mesh(new THREE.TorusGeometry(.75,.065,6,28),isHero?cyan:violet,group);halo.rotation.x=Math.PI/2;halo.position.y=.12;return{group,torso,arm2,weapon,halo,health:isHero?100:45,hit:0,attack:0,cool:0,phase:Math.random()*7}}
 const hero=actor(gold,true);const enemies=[];const effects=[];let running=false,kills=0,wave=1,skillCooldown=0,dodgeCooldown=0,invuln=0,clock=0,attackCooldown=0,move={x:0,y:0},stickTouch=null;
 function spawn(){for(let i=0;i<Math.min(3+wave,11);i++){let e=actor(enemyMat);let a=Math.random()*Math.PI*2,r=10+Math.random()*8;e.group.position.set(Math.cos(a)*r,0,Math.sin(a)*r);enemies.push(e)}document.getElementById('status').textContent='Vague '+wave+' · '+kills+' éliminations'}
